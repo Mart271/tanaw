@@ -140,8 +140,10 @@ class OcrEngine:
         self.read(blank, upscale=1.0)
         return time.perf_counter() - start
 
-    def read(self, image: Frame, *, upscale: float | None = None) -> OcrResult:
-        """Find and read all text in a BGR image."""
+    def read(
+        self, image: Frame, *, upscale: float | None = None, min_confidence: float | None = None
+    ) -> OcrResult:
+        """Find and read all text in a BGR image (optionally overriding the threshold)."""
         if image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
             raise OcrError("OCR expects a BGR uint8 image.")
         height, width = image.shape[:2]
@@ -158,7 +160,9 @@ class OcrEngine:
             prepared = np.asarray(resized, dtype=np.uint8)
 
         raw = self._engine(prepared)
-        boxes, low = self._convert(raw, scale)
+        threshold = (self.min_confidence if min_confidence is None
+                     else validate_confidence(min_confidence))
+        boxes, low = self._convert(raw, scale, threshold)
         elapsed = time.perf_counter() - start
         logger.debug(
             "ocr %dx%d upscale=%.1f boxes=%d low_conf=%d in %.0f ms",
@@ -166,7 +170,9 @@ class OcrEngine:
         )
         return OcrResult(boxes, low, elapsed, (width, height))
 
-    def _convert(self, raw: object, scale: float) -> tuple[list[TextBox], int]:
+    def _convert(
+        self, raw: object, scale: float, threshold: float
+    ) -> tuple[list[TextBox], int]:
         quads = getattr(raw, "boxes", None)
         texts = getattr(raw, "txts", None)
         scores = getattr(raw, "scores", None)
@@ -180,7 +186,7 @@ class OcrEngine:
             cleaned = str(text).strip()
             if not cleaned:
                 continue
-            if confidence < self.min_confidence:
+            if confidence < threshold:
                 low += 1
                 continue
             points = [(float(p[0]), float(p[1])) for p in quad]

@@ -34,7 +34,9 @@ from tanaw import netguard
 from tanaw.capture import CaptureError, WindowCapturer, enable_dpi_awareness, find_window
 from tanaw.frames import Frame, Rect
 from tanaw.profile import (
+    DEFAULT_NAV_KEYS,
     CursorTemplateStrategy,
+    FocusOcrOptions,
     FocusProfile,
     HighlightColorStrategy,
     Hsv,
@@ -237,6 +239,8 @@ def build_profile(
     strategy: str,
     out_path: Path,
     pick: PickFn = tk_pick,
+    ocr: FocusOcrOptions | None = None,
+    nav_keys: tuple[str, ...] | None = None,
 ) -> tuple[FocusProfile, Frame | None]:
     """Ask for the boxes and build a validated profile. Returns (profile, cursor template)."""
     img_h, img_w = frame.shape[:2]
@@ -285,6 +289,8 @@ def build_profile(
         client_height=img_h,
         menu_region=RectModel.from_rect(region),
         strategy=chosen,
+        ocr=ocr or FocusOcrOptions(),
+        nav_keys=nav_keys or DEFAULT_NAV_KEYS,
     )
     return profile, template
 
@@ -301,6 +307,41 @@ def write_calibration(
             raise ProfileError(f"Could not write {template_file}")
     save_profile(profile, out_path)
     return template_file
+
+
+def self_test(frame: Frame, profile: FocusProfile, template: Frame | None) -> None:
+    """Show the helper what Focus Mode finds and reads on the calibration frame."""
+    from tanaw.focus import LocateStatus, locate_selection, prepare_row_for_ocr
+    from tanaw.focus import crop as focus_crop
+    from tanaw.ocr import OcrEngine
+
+    region = focus_crop(frame, profile.menu_region.to_rect())
+    located = locate_selection(region, profile, template)
+    print(f"\nSelf-test on this frame: selection {located.status.value} "
+          f"(score {located.score:.3f})")
+    if located.status is not LocateStatus.FOUND or located.row is None:
+        print("  Focus Mode would stay silent or say 'selection unclear' here. Recalibrate if "
+              "the selection is visible on screen.")
+        return
+    row = focus_crop(region, located.row)
+    engine = OcrEngine(min_confidence=0.0)
+    engine.warm_up()  # so the timings below are OCR, not model loading
+    current = profile.ocr
+    variants = [current]
+    for downscale in (1, 2, 3):
+        for preprocess in ("none", "threshold"):
+            option = current.model_copy(update={"downscale": downscale, "preprocess": preprocess})
+            if option not in variants:
+                variants.append(option)
+    print("  What OCR reads in the selected row (first line = the saved profile setting):")
+    for option in variants:
+        result = engine.read(prepare_row_for_ocr(row, option), upscale=option.upscale,
+                             min_confidence=0.0)
+        found = ", ".join(f"{b.text!r} {b.confidence:.2f}" for b in result.boxes) or "nothing"
+        print(f"    downscale={option.downscale} preprocess={option.preprocess:<9} "
+              f"({result.elapsed_s * 1000:.0f} ms): {found}")
+    print("  To change the setting, edit the profile's \"ocr\" section or re-run with "
+          "--pixel-scale / --threshold.")
 
 
 def _capture(window_query: str) -> Frame:
@@ -322,6 +363,14 @@ def main(argv: list[str] | None = None) -> int:
                         default="cursor_template")
     parser.add_argument("--name", help="Profile name (default: from the --out file name)")
     parser.add_argument("--window-title", help="Window title to store when using --from-image")
+    parser.add_argument("--pixel-scale", type=int, default=1, choices=(1, 2, 3, 4),
+                        help="Pixel-art scale of the game (DELTARUNE at 1280x960: 2). "
+                             "Rows are shrunk back by this before OCR")
+    parser.add_argument("--threshold", action="store_true",
+                        help="Convert light-on-dark text to black-on-white before OCR")
+    parser.add_argument("--nav-keys", default=",".join(DEFAULT_NAV_KEYS),
+                        help="Comma-separated keys that move the selection "
+                             "(DELTARUNE: up,down,left,right,z,x,c,enter,esc)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -341,8 +390,12 @@ def main(argv: list[str] | None = None) -> int:
             frame = _capture(args.window)
             window_title = args.window
         name = args.name or profile_name_from_path(args.out)
+        ocr = FocusOcrOptions(downscale=args.pixel_scale,
+                              preprocess="threshold" if args.threshold else "none")
+        nav_keys = tuple(k.strip() for k in args.nav_keys.split(",") if k.strip())
         profile, template = build_profile(frame, name=name, window=window_title,
-                                          strategy=args.strategy, out_path=args.out)
+                                          strategy=args.strategy, out_path=args.out,
+                                          ocr=ocr, nav_keys=nav_keys)
         template_file = write_calibration(profile, template, args.out)
     except CalibrationCancelledError:
         print("Calibration cancelled; nothing was saved.")
@@ -357,6 +410,7 @@ def main(argv: list[str] | None = None) -> int:
     region = profile.menu_region
     print(f"Menu area: {region.left},{region.top} {region.width}x{region.height} "
           f"in a {profile.client_width}x{profile.client_height} window")
+    self_test(frame, profile, template)
     return 0
 
 

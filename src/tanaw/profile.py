@@ -104,6 +104,10 @@ Strategy = Annotated[
 class FocusOcrOptions(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    # Pixel-art games are often drawn at 2x/3x; shrinking the row back to the native
+    # size made DELTARUNE's "No" read correctly (it often read as "Ho" at 2x).
+    downscale: int = Field(default=1, ge=1, le=4)
+    pad: int = Field(default=16, ge=0, le=64)  # background border; OCR dislikes tight crops
     upscale: float = Field(default=1.0, ge=1.0, le=4.0)
     min_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
     # "threshold": light text on dark background -> black on white before OCR.

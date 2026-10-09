@@ -8,6 +8,13 @@ Hardware/software for all runs below: Windows 11 Home (10.0.26300), Python 3.12 
 
 Test laptop: Intel Core i5-12500H (16 threads), 15.6 GB RAM, two 1920x1080 displays.
 
+### Focus step 2: Selection logic (`focus.py`, pure) + calibration self-test
+- `locate_cursor` (template match, ambiguity check, NaN-safe on flat black), `locate_highlight` (HSV mask with hue wrap → merged rows → largest), `decide()` (speak / same / unclear / silent: no cursor on screen = silent, not "unclear", so walking around the overworld stays quiet), LRU `OcrCache` keyed by crop hash, `normalize_frame` (rescale to the calibrated size; different aspect ratio = recalibrate).
+- Ran on the real DELTARUNE frame: heart template matched at score 1.000 with the correct row, both on the real "Yes selected" frame and on a locally edited copy with the heart moved to "No" (not a real game state).
+- **Row OCR robustness, measured** on the real frame, 36 row positions/heights per word: plain crop read "No" correctly 15/36 (else "Ho"); full row shrunk to native size (½) + 16 px background padding + threshold read **"Yes" 36/36 and "No" 36/36**, ~36 ms average. Now profile options `ocr.downscale`, `ocr.pad`, `ocr.preprocess`; calibrate flags `--pixel-scale 2 --threshold`.
+- Calibration self-test prints what OCR reads in the selected row with each setting. Found because of it: one calibration crop read *nothing* with the old default settings.
+- `pytest`: 175 passed.
+
 ### Focus step 1: Profiles + calibration (`profile.py`, `calibrate.py`)
 - Mark confirmed Read Mode works on DELTARUNE with the real hotkeys.
 - `FocusProfile` (pydantic): menu region must be inside the window, HSV ranges valid (hue may wrap for reds), nav keys must be known and unique, template path can't leave the profiles folder and must be a PNG, unknown fields rejected, file size capped.
