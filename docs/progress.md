@@ -8,6 +8,12 @@ Hardware/software for all runs below: Windows 11 Home (10.0.26300), Python 3.12 
 
 Test laptop: Intel Core i5-12500H (16 threads), 15.6 GB RAM, two 1920x1080 displays.
 
+### Step 5 — Speech (`src/tanaw/speech.py`)
+- `Speaker` runs SAPI on its own thread (`tanaw-speech`); COM is initialised and released inside that thread. `speak` / `stop` / `repeat_last` / `toggle_pause` only enqueue, so callers never block. Flags: async + purge-before-speak + **not-XML** (so OCR text can't inject SAPI markup). New speech while paused resumes; stop while paused un-pauses.
+- Ran `pytest`: 65 passed (11 speech tests with a fake voice: ordering, thread, repeat, pause, stop, truncation, init failure).
+- Ran the real SAPI voice: `python -m tanaw.speech "Tanaw speech test."` finished without errors. A probe on the real voice measured: first `Speak()` call returned in 182 ms (audio device start-up), an interrupting `Speak()` in 79 ms, and pause held speech until resume. These are single quick runs, not benchmarks. The ~80 ms purge cost is part of keypress→speech latency, worth re-measuring in P1.
+- **Manual test needed:** I can't hear the laptop's audio, so confirm you actually hear the voice and that it gets cut off when interrupted.
+
 ### Step 4 — OCR adapter (`src/tanaw/ocr.py`)
 - Typed wrapper: `OcrEngine.read(frame, upscale=...)` returns `TextBox(text, confidence, rect)` in original-image coordinates, plus a count of boxes dropped for low confidence. Explicit model paths, direction classifier off, warm-up call.
 - **Speed fix found by measuring:** rapidocr's default detector resize ("min side ≥ 736") made a 160x60 crop take ~1.7–2.2 s. Switched to "max side ≤ 960" and 4 ONNX threads. Same crop then took 95 ms through the CLI. These are quick checks on synthetic OpenCV-drawn text, **not** benchmarks; real numbers come from the P1 benchmark scripts on game frames.
