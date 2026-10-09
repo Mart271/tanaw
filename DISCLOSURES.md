@@ -25,6 +25,9 @@ Text-to-speech currently uses the built-in **Windows SAPI** voice (part of Windo
 | pywin32 | 312 | Window lookup (`win32gui`), DPI awareness, SAPI speech via COM | PSF |
 | pynput | 1.8.2 | Global hotkeys | LGPL-3.0 |
 | pydantic | 2.14.0 | Settings and profile validation | MIT |
+| tkinter (Python standard library) | bundled | Calibration box picker | PSF |
+
+Windows APIs called directly through `ctypes` (no extra package): `PrintWindow`/GDI for window capture, DPI awareness functions.
 
 Transitive dependencies of `rapidocr` (omegaconf, pyclipper, shapely, Pillow, PyYAML, requests, tqdm, colorlog, six) are installed by pip. `requests` is only used by rapidocr's model-download path, which Tanaw never triggers (model paths are passed explicitly), and the network guard would block it anyway.
 

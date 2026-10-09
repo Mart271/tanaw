@@ -8,6 +8,13 @@ Hardware/software for all runs below: Windows 11 Home (10.0.26300), Python 3.12 
 
 Test laptop: Intel Core i5-12500H (16 threads), 15.6 GB RAM, two 1920x1080 displays.
 
+### Focus step 1: Profiles + calibration (`profile.py`, `calibrate.py`)
+- Mark confirmed Read Mode works on DELTARUNE with the real hotkeys.
+- `FocusProfile` (pydantic): menu region must be inside the window, HSV ranges valid (hue may wrap for reds), nav keys must be known and unique, template path can't leave the profiles folder and must be a PNG, unknown fields rejected, file size capped.
+- `python -m tanaw.calibrate --window "DELTARUNE" --out profiles/deltarune.json` (or `--from-image` for a saved capture). Picker is **tkinter, not `cv2.selectROI`**: rapidocr requires headless OpenCV, which has no GUI. cursor_template = 3 boxes (menu area, cursor, whole selected row); highlight_color = 2 boxes (menu area, highlighted item → HSV range). Cursor PNG goes to `profiles/local/` (gitignored).
+- Ran `pytest`: 147 passed (adds 25 profile/calibration tests on synthetic images, including a scripted end-to-end calibration).
+- Drove the real tkinter picker with simulated mouse/key events on a DELTARUNE capture: drag returned the heart's box in game pixels at 0.885 preview scale; "A" returned the whole window; Esc returned nothing.
+
 ### First run on DELTARUNE (Chapter 1&2, windowed, 1280x960 client area)
 - **Bug found:** with the Claude window covering the game, `python -m tanaw.capture --save` saved the Claude window's pixels, not the game. `mss` copies screen pixels, so whatever is on top gets captured. The debug tool only warned. (Read Mode itself refused when the game wasn't in front, so it didn't leak.) I deleted that file.
 - **Fix:** new `printwindow.py` asks Windows to render the game window's own client area (`PrintWindow` + `PW_RENDERFULLCONTENT`). `capture.decide_source()` (pure, tested) only allows screen pixels while the game is the active window; otherwise it raises "Can't see the game window. Bring it to the front." New `--capture auto|window|screen` flag.

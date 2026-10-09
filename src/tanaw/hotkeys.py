@@ -45,8 +45,23 @@ _NAMED_KEYS: dict[str, int] = {
     "space": 0x20, "enter": 0x0D, "tab": 0x09, "esc": 0x1B, "backspace": 0x08,
     "insert": 0x2D, "delete": 0x2E, "home": 0x24, "end": 0x23,
     "page_up": 0x21, "page_down": 0x22,
+    "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
     **{f"f{i}": 0x70 + i - 1 for i in range(1, 13)},
 }
+_KEY_ALIASES = {"return": "enter", "escape": "esc", "pgup": "page_up", "pgdn": "page_down"}
+
+
+def parse_key_name(name: str) -> int:
+    """Virtual-key code for one non-modifier key: "up", "enter", "z", "f5", ..."""
+    if not isinstance(name, str):
+        raise ValueError("Key name must be a string")
+    key = name.strip().strip("<>").lower()
+    key = _KEY_ALIASES.get(key, key)
+    if key in _NAMED_KEYS:
+        return _NAMED_KEYS[key]
+    if len(key) == 1 and key.isascii() and key.isalnum():
+        return ord(key.upper())
+    raise ValueError(f"Unknown key {name!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,12 +96,10 @@ def parse_hotkey(spec: str) -> Hotkey:
         elif part == "shift":
             mod = Modifier.SHIFT
         else:
-            if part in _NAMED_KEYS:
-                keys.append(_NAMED_KEYS[part])
-            elif len(part) == 1 and part.isascii() and part.isalnum():
-                keys.append(ord(part.upper()))
-            else:
-                raise ValueError(f"Unknown key {part!r} in hotkey {spec!r}")
+            try:
+                keys.append(parse_key_name(part))
+            except ValueError:
+                raise ValueError(f"Unknown key {part!r} in hotkey {spec!r}") from None
             continue
         if mod in modifiers:
             raise ValueError(f"Repeated modifier in hotkey {spec!r}")
