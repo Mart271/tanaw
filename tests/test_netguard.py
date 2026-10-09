@@ -116,3 +116,12 @@ def test_loopback_connection_still_works() -> None:
             with conn:
                 client.sendall(b"ping")
                 assert conn.recv(4) == b"ping"
+
+
+def test_self_test_passes_only_with_guard_installed() -> None:
+    assert not netguard.self_test()  # guard off: refuses to try, never connects
+    netguard.install()
+    try:
+        assert netguard.self_test()
+    finally:
+        netguard.uninstall()

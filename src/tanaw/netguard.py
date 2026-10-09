@@ -170,3 +170,27 @@ def uninstall() -> None:
 
 def is_installed() -> bool:
     return bool(_originals)
+
+
+#: A real public address (Cloudflare DNS) used for the self-test. With the guard on,
+#: the connect is refused inside Python before any packet is sent.
+SELF_TEST_ADDRESS = ("1.1.1.1", 443)
+
+
+def self_test() -> bool:
+    """Deliberately try to reach a public address; True if the guard blocked it.
+
+    Returns False without attempting anything if the guard isn't installed, so
+    this never makes a real connection.
+    """
+    if not is_installed():
+        return False
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(1.0)
+        try:
+            probe.connect(SELF_TEST_ADDRESS)
+        except NetworkBlockedError:
+            return True
+        except OSError:
+            return False  # reached the real network stack: the guard did NOT block it
+    return False  # connected: the guard did NOT block it

@@ -8,6 +8,13 @@ Hardware/software for all runs below: Windows 11 Home (10.0.26300), Python 3.12 
 
 Test laptop: Intel Core i5-12500H (16 threads), 15.6 GB RAM, two 1920x1080 displays.
 
+### Measurements setup (Oct 9, ~17:00)
+- Added `scripts/check_offline.py`, `bench_latency.py`, `bench_focus.py`, `bench_ocr.py` (logic in `src/tanaw/bench.py`, unit-tested); results go to `docs/results.md`, real numbers only.
+- `netguard.self_test()` deliberately connects to 1.1.1.1:443 with the guard on. Runs at every app start-up (fail closed) and in `check_offline.py`. Both printed PASS.
+- I did **not** turn the network off: it's a system setting, and it would also cut this Claude Code session off. Mark runs `check_offline.py --prove-offline` with Wi-Fi off (and the Radmin VPN / Tailscale adapters, which were also up).
+- bench_latency: 0 samples so far (no keypress sessions since logging was added). bench_focus / bench_ocr: no `fixtures/` yet.
+- Smoke-tested bench_focus / bench_ocr on scratch labels (1 real frame, 1 locally edited "No selected" copy, 1 blank): scripts work. Not reported as results. bench_ocr flagged full-screen Read Mode's "No"→"Ho" as "confidently wrong", as expected.
+
 ### Focus step 3: Focus Mode runtime (`focus_mode.py`, hotkeys, worker) + latency logging
 - Ctrl+Alt+F toggles; profile nav keys (no Ctrl/Alt held) trigger a read, including key auto-repeat. Rapid presses are merged in the worker queue (latest wins). After a key: profile delay → capture until the menu area differs from the last stable frame (prefilter only) → settle → locate → OCR the row (LRU cache by crop hash) → speak only if changed and confident. Nav keys typed while another app is focused are ignored.
 - **Bug found by the synthetic integration test:** OCR detected the cursor sprite itself as a "♥" box at 0.11 confidence, which made the row "unclear" although "Attack" read at 1.00. Fix: paint over the cursor (we know where it is) before OCR.

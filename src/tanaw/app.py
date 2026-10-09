@@ -301,6 +301,16 @@ def run(settings: AppSettings) -> int:
     events = EventLog.for_new_session()
     events.write("start", dpi=dpi_mode.replace("(", "_").replace(")", ""),
                  debug_captures=settings.debug_captures, verbose_text=settings.verbose_text)
+    # Deliberately try to reach a public address; the guard must block it before any
+    # packet is sent. If it doesn't, refuse to run (fail closed).
+    guard_ok = netguard.self_test()
+    events.write("netguard_selftest", passed=guard_ok,
+                 target=":".join(str(p) for p in netguard.SELF_TEST_ADDRESS))
+    print(f"Network guard self-test (connect to {netguard.SELF_TEST_ADDRESS[0]}): "
+          f"{'PASS - blocked' if guard_ok else 'FAIL'}")
+    if not guard_ok:
+        events.close()
+        return _fail(None, "The network guard did not block a test connection. Not starting.")
 
     speaker = Speaker(lambda: SapiVoice(rate=settings.speech_rate), log_text=settings.verbose_text)
     try:
