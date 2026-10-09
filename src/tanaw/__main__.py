@@ -29,6 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nearest", action="store_true",
                         help="Use nearest-neighbour upscaling instead of cubic")
     parser.add_argument("--rate", type=int, default=0, help="Speech rate, -10 to 10")
+    parser.add_argument("--capture", choices=("auto", "window", "screen"), default="auto",
+                        help="How to capture: auto (default), window (PrintWindow only), "
+                             "screen (screen pixels, game must be in front)")
     return parser
 
 
@@ -47,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
             upscale=args.upscale,
             interpolation="nearest" if args.nearest else "cubic",
             speech_rate=args.rate,
+            capture_method=args.capture,
         )
     except ValidationError as exc:
         problems = "; ".join(

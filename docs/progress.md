@@ -8,6 +8,15 @@ Hardware/software for all runs below: Windows 11 Home (10.0.26300), Python 3.12 
 
 Test laptop: Intel Core i5-12500H (16 threads), 15.6 GB RAM, two 1920x1080 displays.
 
+### First run on DELTARUNE (Chapter 1&2, windowed, 1280x960 client area)
+- **Bug found:** with the Claude window covering the game, `python -m tanaw.capture --save` saved the Claude window's pixels, not the game. `mss` copies screen pixels, so whatever is on top gets captured. The debug tool only warned. (Read Mode itself refused when the game wasn't in front, so it didn't leak.) I deleted that file.
+- **Fix:** new `printwindow.py` asks Windows to render the game window's own client area (`PrintWindow` + `PW_RENDERFULLCONTENT`). `capture.decide_source()` (pure, tested) only allows screen pixels while the game is the active window; otherwise it raises "Can't see the game window. Bring it to the front." New `--capture auto|window|screen` flag.
+- Ran on DELTARUNE while covered: `PrintWindow` returned the exact game frame in 21–35 ms (also without the Steam overlay popup). `--capture screen` while covered refused as intended (exit 1).
+- Ran the real Read pipeline (real capture + OCR + layout through `Worker.handle_read`, speech replaced by print) 3 times on the "start from Chapter 1?" screen: output `"Would you like to start from Chapter 1? Yes. Ho."`, 963–1178 ms request→speak call.
+- **OCR misread:** DELTARUNE's pixel **"No" reads as "Ho" with 0.97–0.997 confidence**, so the confidence filter can't catch it. On this one frame: a black-and-white threshold + slight blur, or a downscale to the native 640x480 + threshold, read "No" (0.87–0.98), and cropping just the "No" row read "No" (0.81–0.94) in ~36 ms. One frame is not enough to pick a fix; this belongs in the per-game profile once we have more frames.
+- `pytest`: 122 passed. `mypy --strict` and `ruff`: clean.
+- Still not done by me: real hotkey presses and hearing the speech in-game.
+
 ### Step 6 — Read Mode (`layout.py`, `hotkeys.py`, `settings.py`, `events.py`, `app.py`, `__main__.py`)
 - `layout.py` (pure): groups OCR boxes into lines by vertical overlap, orders top→bottom / left→right, reads wide gaps as a pause ("FIGHT, ACT"), drops dialogue bullets ("* ..."), ends lines with a full stop for natural pauses.
 - `hotkeys.py`: own matcher on Windows virtual-key codes. **Found while probing pynput 1.8.2:** its `HotKey` helper compares letters by character, but with Ctrl+Alt held Windows can report the letter with no character, so `<ctrl>+<alt>+r` never matched in a simulated press. Hotkeys must include Ctrl or Alt, so they can't steal a game key; duplicates are rejected.

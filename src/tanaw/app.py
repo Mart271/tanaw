@@ -37,7 +37,6 @@ from tanaw.speech import SapiVoice, Speaker, SpeechError
 
 logger = logging.getLogger(__name__)
 
-MSG_NOT_FOREGROUND = "Switch to the game window first."
 MSG_NO_TEXT = "No text found."
 MSG_UNCLEAR = "I can't read that clearly."
 MSG_UNEXPECTED = "Something went wrong reading the screen."
@@ -187,11 +186,8 @@ class Worker:
 
     def handle_read(self, source: FrameSource, request: ReadRequest) -> None:
         try:
+            # The capturer refuses (CaptureError) rather than return another app's pixels.
             captured, settled = source.grab_settled(timeout_s=self.settings.settle_timeout_s)
-            if not captured.foreground:
-                self._speaker.speak(MSG_NOT_FOREGROUND, remember=False)
-                self._event("read_skipped", reason="not_foreground")
-                return
             self._debug.save(captured, "read")
             result = self._reader.read(captured.image)
         except (CaptureError, OcrError) as exc:
@@ -217,7 +213,8 @@ class Worker:
         width, height = result.image_size
         self._event(
             "read",
-            width=width, height=height, settled=settled,
+            width=width, height=height, settled=settled, source=captured.source,
+            foreground=captured.foreground,
             capture_ms=captured.elapsed_s * 1000, ocr_ms=result.elapsed_s * 1000,
             boxes=len(result.boxes), low_conf=result.low_confidence, lines=len(lines),
             chars=len(text), hotkey_to_speak_call_ms=latency_ms,
@@ -284,7 +281,7 @@ def run(settings: AppSettings) -> int:
 
         worker = Worker(
             settings,
-            source_factory=lambda: WindowCapturer(window),
+            source_factory=lambda: WindowCapturer(window, settings.capture_method),
             reader=engine,
             speaker=speaker,
             events=events,

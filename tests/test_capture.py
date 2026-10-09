@@ -3,10 +3,16 @@ from __future__ import annotations
 import pytest
 
 from tanaw.capture import (
+    MSG_BRING_TO_FRONT,
+    MSG_WINDOW_CAPTURE_FAILED,
     AmbiguousWindowError,
+    CaptureError,
+    CaptureMethod,
+    WindowFrameState,
     WindowInfo,
     WindowNotFoundError,
     choose_window,
+    decide_source,
     validate_title_query,
 )
 
@@ -45,3 +51,36 @@ def test_not_found() -> None:
 def test_title_query_validation(bad: str) -> None:
     with pytest.raises(ValueError):
         validate_title_query(bad)
+
+
+@pytest.mark.parametrize(
+    ("method", "state", "foreground", "expected"),
+    [
+        ("auto", "ok", False, "window"),  # covered game: its own pixels, never the cover
+        ("auto", "ok", True, "window"),
+        ("auto", "blank", True, "screen"),  # PrintWindow gave black; screen is safe in front
+        ("auto", "failed", True, "screen"),
+        ("auto", "blank", False, "window"),  # honest black frame, no other app's pixels
+        ("window", "blank", False, "window"),
+        ("screen", "ok", True, "screen"),
+    ],
+)
+def test_decide_source(
+    method: CaptureMethod, state: WindowFrameState, foreground: bool, expected: str
+) -> None:
+    assert decide_source(method, state, foreground) == expected
+
+
+@pytest.mark.parametrize(
+    ("method", "state", "message"),
+    [
+        ("auto", "failed", MSG_BRING_TO_FRONT),
+        ("screen", "ok", MSG_BRING_TO_FRONT),
+        ("window", "failed", MSG_WINDOW_CAPTURE_FAILED),
+    ],
+)
+def test_screen_pixels_never_used_when_game_is_not_in_front(
+    method: CaptureMethod, state: WindowFrameState, message: str
+) -> None:
+    with pytest.raises(CaptureError, match=message):
+        decide_source(method, state, foreground=False)

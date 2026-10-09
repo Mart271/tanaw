@@ -1,8 +1,10 @@
 """Find the game window and capture its client area (Windows only).
 
-Only the selected window's client rectangle is captured, never the whole
-desktop. Frames stay in memory; the debug CLI writes a PNG only when ``--save``
-is passed.
+Only the selected window's client area is captured, never the whole desktop.
+By default the window renders its own pixels (``PrintWindow``), so capture works
+while it's covered and can't include other apps. Screen pixels are used only as
+a fallback while the game is the active window. Frames stay in memory; the
+debug CLI writes a PNG only when ``--save`` is passed.
 
 Debug CLI::
 
@@ -20,6 +22,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
+from typing import Literal
 
 import mss
 import numpy as np
@@ -27,6 +30,7 @@ import win32gui
 
 from tanaw import netguard
 from tanaw.frames import Frame, Rect, settle
+from tanaw.printwindow import print_window_client
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +75,9 @@ class WindowInfo:
 class CapturedFrame:
     image: Frame  # (h, w, 3) BGR
     screen_rect: Rect  # where the captured area is on the virtual desktop, physical pixels
-    foreground: bool  # False means another window may be covering the game
+    foreground: bool  # whether the game was the active window at capture time
     elapsed_s: float
+    source: Literal["window", "screen"]  # PrintWindow or screen pixels
 
 
 def enable_dpi_awareness() -> str:
@@ -176,11 +181,47 @@ def client_rect_on_screen(hwnd: int) -> Rect:
     return Rect(screen_left, screen_top, width, height)
 
 
+#: "window": PrintWindow only. "screen": screen pixels only (game must be in front).
+#: "auto": PrintWindow first, screen pixels as a fallback only while the game is in front.
+CaptureMethod = Literal["auto", "window", "screen"]
+WindowFrameState = Literal["ok", "blank", "failed"]
+
+MSG_BRING_TO_FRONT = "Can't see the game window. Bring it to the front."
+MSG_WINDOW_CAPTURE_FAILED = "Windows refused to capture the game window."
+
+
+def decide_source(
+    method: CaptureMethod, window_frame: WindowFrameState, foreground: bool
+) -> Literal["window", "screen"]:
+    """Pick which pixels to use. Raises CaptureError instead of capturing other windows.
+
+    Screen pixels are only ever used while the game is the foreground window,
+    because otherwise they may show whatever app is covering it.
+    """
+    if method == "screen":
+        if foreground:
+            return "screen"
+        raise CaptureError(MSG_BRING_TO_FRONT)
+    if method == "window":
+        if window_frame == "failed":
+            raise CaptureError(MSG_WINDOW_CAPTURE_FAILED)
+        return "window"
+    # auto
+    if window_frame == "ok":
+        return "window"
+    if foreground:
+        return "screen"  # PrintWindow unsupported or black, and screen pixels are safe now
+    if window_frame == "blank":
+        return "window"  # honest black frame (e.g. a fade); OCR will find no text
+    raise CaptureError(MSG_BRING_TO_FRONT)
+
+
 class WindowCapturer:
     """Captures one window's client area. Create and use it on a single thread."""
 
-    def __init__(self, window: WindowInfo) -> None:
+    def __init__(self, window: WindowInfo, method: CaptureMethod = "auto") -> None:
         self.window = window
+        self.method: CaptureMethod = method
         self._sct = mss.MSS()
 
     def __enter__(self) -> WindowCapturer:
@@ -211,31 +252,47 @@ class WindowCapturer:
             raise CaptureError("The game window is minimised.")
 
         client = client_rect_on_screen(hwnd)
-        target = client
+        local = Rect(0, 0, client.width, client.height)  # client area in its own coordinates
         if region is not None:
-            target_rel = Rect(client.left + region.left, client.top + region.top,
-                              region.width, region.height)
-            clipped_to_client = client.intersect(target_rel)
-            if clipped_to_client is None:
+            clipped = local.intersect(region)
+            if clipped is None:
                 raise CaptureError("The capture region is outside the game window.")
-            target = clipped_to_client
-        visible = target.intersect(self._virtual_screen())
-        if visible is None:
-            raise CaptureError("The game window is off screen.")
+            local = clipped
+        target = Rect(client.left + local.left, client.top + local.top, local.width, local.height)
+        foreground = win32gui.GetForegroundWindow() == hwnd
 
+        whole: Frame | None = None
+        state: WindowFrameState = "failed"
+        if self.method != "screen":
+            whole = print_window_client(hwnd, client.width, client.height)
+            if whole is not None:
+                state = "ok" if whole.any() else "blank"
+
+        source = decide_source(self.method, state, foreground)
+        if source == "window" and whole is not None:
+            image: Frame = np.ascontiguousarray(
+                whole[local.top:local.bottom, local.left:local.right]
+            )
+        else:
+            image = self._grab_screen(target)
+        elapsed = time.perf_counter() - start
+        logger.debug(
+            "captured %dx%d via %s (printwindow=%s) foreground=%s in %.1f ms",
+            local.width, local.height, source, state, foreground, elapsed * 1000,
+        )
+        return CapturedFrame(image, target, foreground, elapsed, source)
+
+    def _grab_screen(self, target: Rect) -> Frame:
+        visible = target.intersect(self._virtual_screen())
+        if visible is None or visible != target:
+            raise CaptureError("Part of the game window is off screen.")
         shot = self._sct.grab(
             {"left": visible.left, "top": visible.top,
              "width": visible.width, "height": visible.height}
         )
         bgra = np.frombuffer(shot.bgra, dtype=np.uint8).reshape(shot.height, shot.width, 4)
         image: Frame = np.ascontiguousarray(bgra[:, :, :3])
-        foreground = win32gui.GetForegroundWindow() == hwnd
-        elapsed = time.perf_counter() - start
-        logger.debug(
-            "captured %dx%d foreground=%s in %.1f ms",
-            visible.width, visible.height, foreground, elapsed * 1000,
-        )
-        return CapturedFrame(image, visible, foreground, elapsed)
+        return image
 
     def grab_settled(
         self, region: Rect | None = None, *, timeout_s: float = 0.3
@@ -271,6 +328,8 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--list", action="store_true", help="List visible window titles and exit")
     parser.add_argument("--save", action="store_true", help=f"Write the capture to ./{DEBUG_DIR}/")
     parser.add_argument("--settle", action="store_true", help="Wait for the image to stop changing")
+    parser.add_argument("--capture", choices=("auto", "window", "screen"), default="auto",
+                        help="auto (default), window = PrintWindow only, screen = screen pixels")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -284,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         window = find_window(args.window)
-        with WindowCapturer(window) as capturer:
+        with WindowCapturer(window, args.capture) as capturer:
             if args.settle:
                 captured, settled = capturer.grab_settled()
                 print(f"settled: {settled}")
@@ -298,9 +357,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f'window: "{window.title}" (hwnd {window.hwnd}, class {window.class_name})')
     print(f"client area on screen: left={r.left} top={r.top} size={r.width}x{r.height}")
     print(f"frame shape: {captured.image.shape}  foreground: {captured.foreground}")
-    print(f"capture time: {captured.elapsed_s * 1000:.1f} ms")
-    if not captured.foreground:
-        print("Warning: game window is not in front; another window may be covering it.")
+    print(f"captured via: {captured.source}  in {captured.elapsed_s * 1000:.1f} ms")
     if args.save:
         print(f"saved: {_save_png(captured.image, DEBUG_DIR)}")
     return 0

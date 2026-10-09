@@ -8,7 +8,6 @@ import pytest
 
 from tanaw.app import (
     MSG_NO_TEXT,
-    MSG_NOT_FOREGROUND,
     MSG_UNCLEAR,
     DebugCaptureStore,
     ReadRequest,
@@ -23,7 +22,7 @@ from tanaw.settings import AppSettings
 
 def frame(foreground: bool = True) -> CapturedFrame:
     image: Frame = np.zeros((48, 64, 3), dtype=np.uint8)
-    return CapturedFrame(image, Rect(0, 0, 64, 48), foreground, 0.01)
+    return CapturedFrame(image, Rect(0, 0, 64, 48), foreground, 0.01, "window")
 
 
 class FakeSource:
@@ -87,11 +86,12 @@ def test_read_speaks_text_in_reading_order(tmp_path: Path) -> None:
     assert speaker.said == [("Kris. FIGHT, ACT.", True)]
 
 
-def test_read_refuses_when_game_not_in_front(tmp_path: Path) -> None:
+def test_read_works_when_game_is_covered_but_captured_directly(tmp_path: Path) -> None:
     speaker = FakeSpeaker()
-    worker = make_worker(FakeReader(ocr([])), speaker, tmp_path)
+    boxes = [TextBox("Yes", 1.0, Rect(10, 10, 60, 20))]
+    worker = make_worker(FakeReader(ocr(boxes)), speaker, tmp_path)
     worker.handle_read(FakeSource(frame(foreground=False)), ReadRequest(time.perf_counter()))
-    assert speaker.said == [(MSG_NOT_FOREGROUND, False)]
+    assert speaker.said == [("Yes.", True)]
 
 
 @pytest.mark.parametrize(("low", "message"), [(0, MSG_NO_TEXT), (3, MSG_UNCLEAR)])

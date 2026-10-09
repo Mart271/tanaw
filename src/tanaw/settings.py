@@ -49,6 +49,7 @@ class AppSettings(BaseModel):
     interpolation: Literal["cubic", "nearest"] = "cubic"
     speech_rate: int = Field(default=0, ge=-10, le=10)
     settle_timeout_s: float = Field(default=0.3, ge=0.0, le=2.0)
+    capture_method: Literal["auto", "window", "screen"] = "auto"
     hotkeys: HotkeySettings = HotkeySettings()
 
     @field_validator("window")

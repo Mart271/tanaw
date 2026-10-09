@@ -29,17 +29,18 @@ From the repo folder in PowerShell:
 
 ```powershell
 py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+.venv\Scripts\python.exe -m pip install --upgrade pip
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
+
+All commands below call `.venv\Scripts\python.exe` directly, so they work without activating the venv. (If you do run `.venv\Scripts\Activate.ps1`, plain `python` works too. Without either, `python` is your system Python and you'll see `No module named 'tanaw'`.)
 
 ## Run
 
 Start the game in windowed mode, then:
 
 ```powershell
-python -m tanaw --window "DELTARUNE"
+.venv\Scripts\python.exe -m tanaw --window "DELTARUNE"
 ```
 
 `--window` is a case-insensitive substring of the game window's title.
@@ -64,38 +65,41 @@ python -m tanaw --window "DELTARUNE"
 | `--upscale 2` | Upscale frames before OCR, 1 to 4 (may help pixel fonts; default 1) |
 | `--nearest` | Use nearest-neighbour upscaling instead of cubic |
 | `--rate 2` | Speech rate, -10 (slow) to 10 (fast) |
+| `--capture auto` | `auto` (default), `window` or `screen`. See below |
 
-Read Mode only reads when the game window is in front. If another window is focused, Tanaw says "Switch to the game window first" instead of reading whatever is covering the game.
+### How capture works
+
+By default Tanaw asks Windows to render the game window's own pixels (`PrintWindow`), so it works even while another window covers the game, and it can never pick up another app's content. If that gives nothing usable, Tanaw falls back to copying screen pixels, **but only while the game is the active window**. Otherwise it says "Can't see the game window. Bring it to the front." instead of reading whatever is on top.
 
 ## Debug tools
 
 ```powershell
 # List visible window titles (to find the right --window text)
-python -m tanaw.capture --list
+.venv\Scripts\python.exe -m tanaw.capture --list
 
 # Capture the game window once and save it to ./debug/capture-<time>.png
-python -m tanaw.capture --window "DELTARUNE" --save
+.venv\Scripts\python.exe -m tanaw.capture --window "DELTARUNE" --save
 
 # OCR an image file and print each box, its text and confidence
-python -m tanaw.ocr debug\capture-20261009-170000.png --upscale 2
-python -m tanaw.ocr debug\capture-20261009-170000.png --upscale 2 --nearest
+.venv\Scripts\python.exe -m tanaw.ocr debug\capture-20261009-170000.png --upscale 2
+.venv\Scripts\python.exe -m tanaw.ocr debug\capture-20261009-170000.png --upscale 2 --nearest
 
 # Say a line with the speech engine
-python -m tanaw.speech "Hello from Tanaw"
+.venv\Scripts\python.exe -m tanaw.speech "Hello from Tanaw"
 ```
 
 ## Development checks
 
 ```powershell
-python -m pytest
-python -m mypy
-python -m ruff check .
+.venv\Scripts\python.exe -m pytest
+.venv\Scripts\python.exe -m mypy
+.venv\Scripts\python.exe -m ruff check .
 ```
 
 ## Privacy
 
 - Frames are kept in memory only, unless you pass `--debug-captures` or use the capture debug tool with `--save`.
-- Only the selected game window is captured, never the whole desktop.
+- Only the selected game window is captured, never the whole desktop, and never another window that happens to cover the game.
 - Logs (`logs/session-*.jsonl`) contain metadata only unless `--verbose-text` is passed.
 - The network guard refuses non-loopback connections from inside Tanaw's process.
 
