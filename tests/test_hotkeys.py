@@ -92,3 +92,37 @@ def test_key_to_vk() -> None:
     assert key_to_vk(KeyCode.from_char("r")) == VK_R
     assert key_to_vk(Key.space) == VK_SPACE
     assert key_to_vk(None) is None
+
+
+NAV = frozenset({0x26, 0x28, 0x5A})  # up, down, z
+VK_UP, VK_Z = 0x26, 0x5A
+
+
+def test_nav_keys_fire_including_auto_repeat() -> None:
+    m = HotkeyMatcher(DEFAULTS, NAV)
+    assert m.press(VK_UP) is Action.NAV
+    assert m.press(VK_UP) is Action.NAV  # held arrow scrolls the menu
+    assert m.press(VK_Z) is Action.NAV
+    assert m.press(VK_R) is None  # not a nav key
+
+
+def test_nav_keys_ignored_while_ctrl_or_alt_held() -> None:
+    m = HotkeyMatcher(DEFAULTS, NAV)
+    m.press(CTRL_L)
+    assert m.press(VK_UP) is None
+    m.release(CTRL_L)
+    m.release(VK_UP)
+    m.press(SHIFT_L)
+    assert m.press(VK_UP) is Action.NAV  # shift alone doesn't block nav
+
+
+def test_focus_toggle_hotkey() -> None:
+    m = HotkeyMatcher({**DEFAULTS, Action.FOCUS_TOGGLE: parse_hotkey("ctrl+alt+f")}, NAV)
+    m.press(CTRL_L)
+    m.press(ALT_L)
+    assert m.press(0x46) is Action.FOCUS_TOGGLE
+
+
+def test_nav_cannot_be_bound_as_hotkey() -> None:
+    with pytest.raises(ValueError):
+        HotkeyMatcher({Action.NAV: parse_hotkey("ctrl+alt+n")})

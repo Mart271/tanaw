@@ -14,13 +14,14 @@ from tanaw.settings import AppSettings, HotkeySettings
 def test_defaults_are_valid() -> None:
     s = AppSettings(window="  DELTARUNE ")
     assert s.window == "DELTARUNE"
-    assert set(s.hotkeys.bindings()) == set(Action)
+    assert set(s.hotkeys.bindings()) == set(Action) - {Action.NAV}
 
 
 @pytest.mark.parametrize(
     "kwargs",
     [
         {"window": ""},
+        {},  # neither window nor profile
         {"window": "x", "min_confidence": 1.5},
         {"window": "x", "upscale": 0.5},
         {"window": "x", "upscale": 8},

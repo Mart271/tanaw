@@ -311,7 +311,7 @@ def write_calibration(
 
 def self_test(frame: Frame, profile: FocusProfile, template: Frame | None) -> None:
     """Show the helper what Focus Mode finds and reads on the calibration frame."""
-    from tanaw.focus import LocateStatus, locate_selection, prepare_row_for_ocr
+    from tanaw.focus import LocateStatus, locate_selection, prepare_row_for_ocr, selected_row_image
     from tanaw.focus import crop as focus_crop
     from tanaw.ocr import OcrEngine
 
@@ -323,7 +323,7 @@ def self_test(frame: Frame, profile: FocusProfile, template: Frame | None) -> No
         print("  Focus Mode would stay silent or say 'selection unclear' here. Recalibrate if "
               "the selection is visible on screen.")
         return
-    row = focus_crop(region, located.row)
+    row = selected_row_image(region, located)
     engine = OcrEngine(min_confidence=0.0)
     engine.warm_up()  # so the timings below are OCR, not model loading
     current = profile.ocr

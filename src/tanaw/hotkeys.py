@@ -26,6 +26,8 @@ class Action(enum.Enum):
     STOP = "stop"
     REPEAT = "repeat"
     PAUSE = "pause"
+    FOCUS_TOGGLE = "focus_toggle"
+    NAV = "nav"  # a game navigation key (arrows, confirm, cancel) from the profile
 
 
 class Modifier(enum.Enum):
@@ -112,9 +114,18 @@ def parse_hotkey(spec: str) -> Hotkey:
 
 
 class HotkeyMatcher:
-    """Turns a stream of key-down/key-up virtual-key codes into actions."""
+    """Turns a stream of key-down/key-up virtual-key codes into actions.
 
-    def __init__(self, bindings: Mapping[Action, Hotkey]) -> None:
+    Ctrl/Alt combos are matched against ``bindings`` (once per press). Plain
+    presses of ``nav_vks`` (no Ctrl/Alt held) give ``Action.NAV``, including
+    auto-repeat, so holding an arrow to scroll a list keeps Focus Mode updated.
+    """
+
+    def __init__(
+        self, bindings: Mapping[Action, Hotkey], nav_vks: frozenset[int] = frozenset()
+    ) -> None:
+        if Action.NAV in bindings:
+            raise ValueError("NAV is triggered by nav keys, not a hotkey binding")
         by_hotkey: dict[Hotkey, Action] = {}
         for action, hotkey in bindings.items():
             if hotkey in by_hotkey:
@@ -124,6 +135,7 @@ class HotkeyMatcher:
                 )
             by_hotkey[hotkey] = action
         self._by_hotkey = by_hotkey
+        self._nav_vks = nav_vks
         self._held_modifier_vks: set[int] = set()
         self._held_keys: set[int] = set()
 
@@ -134,10 +146,16 @@ class HotkeyMatcher:
         if vk in _MODIFIER_VKS:
             self._held_modifier_vks.add(vk)
             return None
-        if vk in self._held_keys:
-            return None  # auto-repeat while the key is held: fire once only
+        repeat = vk in self._held_keys
         self._held_keys.add(vk)
-        return self._by_hotkey.get(Hotkey(self._modifiers(), vk))
+        modifiers = self._modifiers()
+        if modifiers & {Modifier.CTRL, Modifier.ALT}:
+            if repeat:
+                return None  # auto-repeat of a held hotkey: fire once only
+            return self._by_hotkey.get(Hotkey(modifiers, vk))
+        if vk in self._nav_vks:
+            return Action.NAV
+        return None
 
     def release(self, vk: int) -> None:
         self._held_modifier_vks.discard(vk)
@@ -162,8 +180,13 @@ ActionCallback = Callable[[Action, float], None]
 class HotkeyListener:
     """Global keyboard hook. ``on_action(action, perf_counter_at_press)`` must not block."""
 
-    def __init__(self, bindings: Mapping[Action, Hotkey], on_action: ActionCallback) -> None:
-        self._matcher = HotkeyMatcher(bindings)
+    def __init__(
+        self,
+        bindings: Mapping[Action, Hotkey],
+        on_action: ActionCallback,
+        nav_vks: frozenset[int] = frozenset(),
+    ) -> None:
+        self._matcher = HotkeyMatcher(bindings, nav_vks)
         self._on_action = on_action
         self._listener = keyboard.Listener(on_press=self._press, on_release=self._release)
 

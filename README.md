@@ -45,11 +45,30 @@ Start the game in windowed mode, then:
 
 `--window` is a case-insensitive substring of the game window's title.
 
+### Focus Mode (speaks only the newly selected menu item)
+
+Focus Mode needs a one-time calibration per game, done by a sighted helper (under 2 minutes). With the game window showing a menu with the cursor on an option:
+
+```powershell
+.venv\Scripts\python.exe -m tanaw.calibrate --window "DELTARUNE" --out profiles\deltarune.json --pixel-scale 2 --threshold --nav-keys "up,down,left,right,z,x,c,enter,esc"
+```
+
+Drag three boxes when asked: the menu area (or press **A** for the whole window), a tight box around the cursor (DELTARUNE's red heart), and the whole selected row. The tool then shows what Tanaw reads in that row. The cursor image is saved to `profiles\local\` (gitignored, since it's game art), so each computer calibrates once.
+
+Then run with the profile and press **Ctrl+Alt+F**:
+
+```powershell
+.venv\Scripts\python.exe -m tanaw --profile profiles\deltarune.json
+```
+
+After each navigation key, Tanaw waits for the menu to redraw, finds the cursor, reads only that row, and speaks it if it changed. If OCR isn't confident, or it sees two cursors, it says "Selection unclear" instead of guessing. With no cursor on screen (e.g. walking around), it stays silent.
+
 ### Hotkeys
 
 | Hotkey | Action |
 |---|---|
 | `Ctrl+Alt+R` | Read Mode: read the text in the game window |
+| `Ctrl+Alt+F` | Focus Mode on/off (needs `--profile`) |
 | `Ctrl+Alt+S` | Stop speaking |
 | `Ctrl+Alt+Space` | Repeat the last thing said |
 | `Ctrl+Alt+P` | Pause / resume speech |

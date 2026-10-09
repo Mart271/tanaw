@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -10,8 +11,13 @@ from tanaw.app import (
     MSG_NO_TEXT,
     MSG_UNCLEAR,
     DebugCaptureStore,
+    FocusToggleRequest,
+    NavRequest,
     ReadRequest,
     Worker,
+    WorkItem,
+    _StopWorker,
+    coalesce,
 )
 from tanaw.capture import CapturedFrame, CaptureError
 from tanaw.events import EventLog
@@ -31,13 +37,16 @@ class FakeSource:
         self.grabs = 0
         self.closed = False
 
-    def grab_settled(
-        self, region: Rect | None = None, *, timeout_s: float = 0.3
-    ) -> tuple[CapturedFrame, bool]:
+    def grab(self, region: Rect | None = None) -> CapturedFrame:
         self.grabs += 1
         if isinstance(self.captured, Exception):
             raise self.captured
-        return self.captured, True
+        return self.captured
+
+    def grab_settled(
+        self, region: Rect | None = None, *, timeout_s: float = 0.3
+    ) -> tuple[CapturedFrame, bool]:
+        return self.grab(region), True
 
     def close(self) -> None:
         self.closed = True
@@ -47,7 +56,9 @@ class FakeReader:
     def __init__(self, result: OcrResult) -> None:
         self.result = result
 
-    def read(self, image: Frame, *, upscale: float | None = None) -> OcrResult:
+    def read(
+        self, image: Frame, *, upscale: float | None = None, min_confidence: float | None = None
+    ) -> OcrResult:
         return self.result
 
 
@@ -55,8 +66,12 @@ class FakeSpeaker:
     def __init__(self) -> None:
         self.said: list[tuple[str, bool]] = []
 
-    def speak(self, text: str, *, remember: bool = True) -> None:
+    def speak(
+        self, text: str, *, remember: bool = True, on_start: Callable[[float], None] | None = None
+    ) -> None:
         self.said.append((text, remember))
+        if on_start is not None:
+            on_start(time.perf_counter())
 
 
 def ocr(boxes: list[TextBox], low: int = 0) -> OcrResult:
@@ -151,3 +166,45 @@ def test_debug_captures_are_deleted_on_cleanup(tmp_path: Path) -> None:
     assert len(list((tmp_path / "debug").glob("*.png"))) == 2
     assert store.cleanup() == 2
     assert not (tmp_path / "debug").exists()
+
+
+def test_coalesce_latest_wins_but_keeps_toggles() -> None:
+    r1, r2 = ReadRequest(1.0), ReadRequest(2.0)
+    n1, n2, n3 = NavRequest(3.0), NavRequest(4.0), NavRequest(5.0)
+    t1, t2 = FocusToggleRequest(6.0), FocusToggleRequest(7.0)
+    items: list[WorkItem] = [r1, r2, n1, n2, t1, t2, n3]
+    assert coalesce(items) == [r2, n2, t1, t2, n3]
+    stop = _StopWorker()
+    assert coalesce([n1, stop, n2]) == [n1, stop]
+
+
+def test_read_logs_keypress_and_speech_start(tmp_path: Path) -> None:
+    import json
+
+    speaker = FakeSpeaker()
+    log = EventLog(tmp_path / "s.jsonl")
+    boxes = [TextBox("Yes", 1.0, Rect(10, 10, 60, 20))]
+    pressed = time.perf_counter()
+    make_worker(FakeReader(ocr(boxes)), speaker, tmp_path, log).handle_read(
+        FakeSource(frame()), ReadRequest(pressed)
+    )
+    log.close()
+    records = [json.loads(line) for line in (tmp_path / "s.jsonl").read_text().splitlines()]
+    start = next(r for r in records if r["event"] == "speech_start")
+    assert start["mode"] == "read"
+    assert start["keypress_t"] == round(pressed, 3)
+    assert start["latency_ms"] >= 0
+
+
+def test_focus_toggle_without_profile_explains(tmp_path: Path) -> None:
+    from tanaw.focus_mode import MSG_NO_PROFILE
+
+    source = FakeSource(frame())
+    speaker = FakeSpeaker()
+    worker = Worker(SETTINGS, lambda: source, FakeReader(ocr([])), speaker, None,
+                    DebugCaptureStore(False, tmp_path / "debug"))
+    worker.submit(FocusToggleRequest(time.perf_counter()))
+    worker.submit(NavRequest(time.perf_counter()))  # ignored: no Focus Mode
+    worker.start()
+    worker.stop()
+    assert speaker.said == [(MSG_NO_PROFILE, False)]

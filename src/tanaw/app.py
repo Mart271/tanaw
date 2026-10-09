@@ -2,7 +2,8 @@
 
 Speech controls (stop, repeat, pause) go straight from the key listener to the
 speaker's own queue, so "stop" works instantly even while OCR is busy. Anything
-that captures or runs OCR goes through the worker queue.
+that captures or runs OCR (Read Mode, Focus Mode) goes through the worker queue,
+where bursts of the same request are merged (latest wins).
 """
 
 from __future__ import annotations
@@ -28,12 +29,14 @@ from tanaw.capture import (
     find_window,
 )
 from tanaw.events import EventLog
+from tanaw.focus_mode import MSG_NO_PROFILE, FocusController
 from tanaw.frames import Frame, Rect
 from tanaw.hotkeys import Action, HotkeyListener
 from tanaw.layout import group_lines, speech_text
 from tanaw.ocr import OcrEngine, OcrError, OcrResult
+from tanaw.profile import LoadedProfile, ProfileError, load_profile
 from tanaw.settings import AppSettings
-from tanaw.speech import SapiVoice, Speaker, SpeechError
+from tanaw.speech import SapiVoice, Speaker, SpeechError, SpeechStartCallback
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,8 @@ DEBUG_DIR = Path("debug")
 
 
 class FrameSource(Protocol):
+    def grab(self, region: Rect | None = None) -> CapturedFrame: ...
+
     def grab_settled(
         self, region: Rect | None = None, *, timeout_s: float = 0.3
     ) -> tuple[CapturedFrame, bool]: ...
@@ -56,11 +61,15 @@ class FrameSource(Protocol):
 
 
 class TextReader(Protocol):
-    def read(self, image: Frame, *, upscale: float | None = None) -> OcrResult: ...
+    def read(
+        self, image: Frame, *, upscale: float | None = None, min_confidence: float | None = None
+    ) -> OcrResult: ...
 
 
 class Announcer(Protocol):
-    def speak(self, text: str, *, remember: bool = True) -> None: ...
+    def speak(
+        self, text: str, *, remember: bool = True, on_start: SpeechStartCallback | None = None
+    ) -> None: ...
 
 
 class DebugCaptureStore:
@@ -108,11 +117,37 @@ class ReadRequest:
     pressed_at: float  # time.perf_counter() when the hotkey went down
 
 
+@dataclass(frozen=True, slots=True)
+class FocusToggleRequest:
+    pressed_at: float
+
+
+@dataclass(frozen=True, slots=True)
+class NavRequest:
+    pressed_at: float  # a game navigation key (arrow, confirm, cancel)
+
+
 class _StopWorker:
     pass
 
 
-WorkItem = ReadRequest | _StopWorker
+WorkItem = ReadRequest | FocusToggleRequest | NavRequest | _StopWorker
+
+
+def coalesce(items: list[WorkItem]) -> list[WorkItem]:
+    """Merge runs of the same request: holding an arrow sends many NavRequests, but
+    only the latest state of the menu matters. Toggles are never merged.
+    Anything after a stop request is dropped."""
+    out: list[WorkItem] = []
+    for item in items:
+        if isinstance(item, _StopWorker):
+            out.append(item)
+            break
+        if out and type(out[-1]) is type(item) and isinstance(item, ReadRequest | NavRequest):
+            out[-1] = item  # latest wins
+        else:
+            out.append(item)
+    return out
 
 
 class Worker:
@@ -126,8 +161,10 @@ class Worker:
         speaker: Announcer,
         events: EventLog | None,
         debug_store: DebugCaptureStore,
+        focus: FocusController | None = None,
     ) -> None:
         self.settings = settings
+        self.focus = focus
         self._source_factory = source_factory
         self._reader = reader
         self._speaker = speaker
@@ -160,29 +197,45 @@ class Worker:
             return
         try:
             while True:
-                item = self.queue.get()
-                if isinstance(item, _StopWorker):
-                    break
-                item, stop = self._coalesce(item)
-                self.handle_read(source, item)
-                if stop:
-                    break
+                batch = [self.queue.get()]
+                while True:  # take everything that piled up while we were busy
+                    try:
+                        batch.append(self.queue.get_nowait())
+                    except queue.Empty:
+                        break
+                for item in coalesce(batch):
+                    if isinstance(item, _StopWorker):
+                        return
+                    self._handle(source, item)
         finally:
             source.close()
 
-    def _coalesce(self, item: ReadRequest) -> tuple[ReadRequest, bool]:
-        """If the player pressed Read several times while we were busy, read once."""
-        latest = item
-        stop = False
-        while True:
-            try:
-                extra = self.queue.get_nowait()
-            except queue.Empty:
-                return latest, stop
-            if isinstance(extra, _StopWorker):
-                stop = True
-            else:
-                latest = extra
+    def _handle(self, source: FrameSource, item: WorkItem) -> None:
+        try:
+            if isinstance(item, ReadRequest):
+                self.handle_read(source, item)
+            elif isinstance(item, FocusToggleRequest):
+                if self.focus is None:
+                    self._speaker.speak(MSG_NO_PROFILE, remember=False)
+                else:
+                    self.focus.toggle(source, item.pressed_at)
+            elif isinstance(item, NavRequest) and self.focus is not None:
+                self.focus.on_nav(source, item.pressed_at)
+        except Exception:
+            logger.exception("worker item failed: %s", type(item).__name__)
+            self._speaker.speak(MSG_UNEXPECTED, remember=False)
+            self._event("error", mode=type(item).__name__, kind="unexpected")
+
+    def _speech_start_logger(self, mode: str, pressed_at: float) -> SpeechStartCallback | None:
+        if self._events is None:
+            return None
+        events = self._events
+
+        def on_start(started_at: float) -> None:
+            events.write("speech_start", mode=mode, keypress_t=pressed_at,
+                         speech_start_t=started_at, latency_ms=(started_at - pressed_at) * 1000)
+
+        return on_start
 
     def handle_read(self, source: FrameSource, request: ReadRequest) -> None:
         try:
@@ -202,12 +255,13 @@ class Worker:
 
         lines = group_lines(result.boxes)
         text = speech_text(lines)
+        on_start = self._speech_start_logger("read", request.pressed_at)
         if text:
-            self._speaker.speak(text)
+            self._speaker.speak(text, on_start=on_start)
         elif result.low_confidence:
-            self._speaker.speak(MSG_UNCLEAR, remember=False)
+            self._speaker.speak(MSG_UNCLEAR, remember=False, on_start=on_start)
         else:
-            self._speaker.speak(MSG_NO_TEXT, remember=False)
+            self._speaker.speak(MSG_NO_TEXT, remember=False, on_start=on_start)
 
         latency_ms = (time.perf_counter() - request.pressed_at) * 1000
         width, height = result.image_size
@@ -217,7 +271,7 @@ class Worker:
             foreground=captured.foreground,
             capture_ms=captured.elapsed_s * 1000, ocr_ms=result.elapsed_s * 1000,
             boxes=len(result.boxes), low_conf=result.low_confidence, lines=len(lines),
-            chars=len(text), hotkey_to_speak_call_ms=latency_ms,
+            chars=len(text), keypress_t=request.pressed_at, hotkey_to_speak_call_ms=latency_ms,
         )
         logger.info(
             "read: %d boxes (%d low-confidence), %d lines, %d chars, ocr %.0f ms, "
@@ -241,7 +295,7 @@ def _fail(speaker: Speaker | None, message: str) -> int:
 
 
 def run(settings: AppSettings) -> int:
-    """Start Tanaw Read Mode. Blocks until Ctrl+C. Returns a process exit code."""
+    """Start Tanaw (Read Mode, plus Focus Mode with a profile). Blocks until Ctrl+C."""
     netguard.install()
     dpi_mode = enable_dpi_awareness()
     events = EventLog.for_new_session()
@@ -260,8 +314,21 @@ def run(settings: AppSettings) -> int:
     hotkeys: HotkeyListener | None = None
     worker: Worker | None = None
     try:
+        loaded: LoadedProfile | None = None
+        if settings.profile is not None:
+            try:
+                loaded = load_profile(settings.profile)
+            except ProfileError as exc:
+                events.write("error", mode="startup", kind="ProfileError")
+                return _fail(speaker, str(exc))
+            print(f"Profile: {loaded.profile.name} ({loaded.profile.strategy.kind})")
+            events.write("profile", name=loaded.profile.name,
+                         strategy=loaded.profile.strategy.kind)
+        window_query = settings.window or (loaded.profile.window if loaded else None)
+        if window_query is None:  # settings validation guarantees one of the two
+            return _fail(speaker, "No game window given.")
         try:
-            window: WindowInfo = find_window(settings.window)
+            window: WindowInfo = find_window(window_query)
         except (CaptureError, ValueError) as exc:
             events.write("error", mode="startup", kind=type(exc).__name__)
             return _fail(speaker, str(exc))
@@ -279,6 +346,9 @@ def run(settings: AppSettings) -> int:
         events.write("ocr_ready", load_ms=load_s * 1000, warm_ms=warm_s * 1000)
         print(f"OCR models loaded in {load_s:.1f} s")
 
+        focus = (FocusController(loaded, engine, speaker, events,
+                                 verbose_text=settings.verbose_text)
+                 if loaded is not None else None)
         worker = Worker(
             settings,
             source_factory=lambda: WindowCapturer(window, settings.capture_method),
@@ -286,6 +356,7 @@ def run(settings: AppSettings) -> int:
             speaker=speaker,
             events=events,
             debug_store=debug_store,
+            focus=focus,
         )
         worker.start()
 
@@ -295,6 +366,10 @@ def run(settings: AppSettings) -> int:
             # Runs on the key-listener thread: only enqueue, never block.
             if action is Action.READ:
                 active_worker.submit(ReadRequest(pressed_at))
+            elif action is Action.NAV:
+                active_worker.submit(NavRequest(pressed_at))
+            elif action is Action.FOCUS_TOGGLE:
+                active_worker.submit(FocusToggleRequest(pressed_at))
             elif action is Action.STOP:
                 speaker.stop()
             elif action is Action.REPEAT:
@@ -303,11 +378,15 @@ def run(settings: AppSettings) -> int:
                 speaker.toggle_pause()
 
         bindings = settings.hotkeys.bindings()
-        hotkeys = HotkeyListener(bindings, on_action)
+        nav_vks = loaded.profile.nav_vks() if loaded is not None else frozenset[int]()
+        hotkeys = HotkeyListener(bindings, on_action, nav_vks)
         hotkeys.start()
-        read_key = bindings[Action.READ].describe()
-        speaker.speak(f"Tanaw ready. Press {read_key.replace('+', ' ')} to read the screen.",
-                      remember=False)
+        read_key = bindings[Action.READ].describe().replace("+", " ")
+        focus_key = bindings[Action.FOCUS_TOGGLE].describe().replace("+", " ")
+        ready = f"Tanaw ready. {read_key} reads the screen."
+        if loaded is not None:
+            ready += f" {focus_key} turns on focus mode."
+        speaker.speak(ready, remember=False)
         print("Ready. Hotkeys:")
         for action, hotkey in bindings.items():
             print(f"  {hotkey.describe():<16} {action.value}")

@@ -211,3 +211,14 @@ def test_prepare_row_downscales_pads_with_background_and_thresholds() -> None:
     out = prepare_row_for_ocr(row, FocusOcrOptions(downscale=2, pad=16, preprocess="threshold"))
     assert out.shape == (20 + 32, 60 + 32, 3)
     assert int(out[0, 0, 0]) == 255  # black padding became white after thresholding
+
+
+def test_selected_row_image_removes_the_cursor() -> None:
+    from tanaw.focus import selected_row_image
+
+    located = locate_cursor(menu(0), cursor_template(), threshold=0.8, row=ROW)
+    assert located.cursor is not None
+    row = selected_row_image(menu(0), located)
+    hsv_red = hsv_mask(row, (170, 100, 100), (10, 255, 255))
+    assert not hsv_red.any()  # no red cursor pixels left
+    assert row.shape[:2] == (ROW.height, ROW.width)

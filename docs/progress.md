@@ -8,6 +8,14 @@ Hardware/software for all runs below: Windows 11 Home (10.0.26300), Python 3.12 
 
 Test laptop: Intel Core i5-12500H (16 threads), 15.6 GB RAM, two 1920x1080 displays.
 
+### Focus step 3: Focus Mode runtime (`focus_mode.py`, hotkeys, worker) + latency logging
+- Ctrl+Alt+F toggles; profile nav keys (no Ctrl/Alt held) trigger a read, including key auto-repeat. Rapid presses are merged in the worker queue (latest wins). After a key: profile delay → capture until the menu area differs from the last stable frame (prefilter only) → settle → locate → OCR the row (LRU cache by crop hash) → speak only if changed and confident. Nav keys typed while another app is focused are ignored.
+- **Bug found by the synthetic integration test:** OCR detected the cursor sprite itself as a "♥" box at 0.11 confidence, which made the row "unclear" although "Attack" read at 1.00. Fix: paint over the cursor (we know where it is) before OCR.
+- `speech_start` events: SAPI's StartStream event is caught on the speech thread (polled every 5 ms while waiting) and logged with `keypress_t`, `speech_start_t`, `latency_ms`, for both Read and Focus Mode. Found while probing: SAPI reused stream number 1 for every utterance, so events are matched by time, not stream number. A quick probe on the real voice measured request→audio start of 292 ms (first, device start-up), 145 ms, 140 ms.
+- Ran on the **live DELTARUNE window** (profile calibrated from a real capture, Focus Mode toggled by code, no game keys pressed): said "Focus mode on. Yes" in 176 ms (2 frames, settle 116 ms, OCR 33 ms); the repeat was served from the OCR cache.
+- `pytest`: 192 passed, including Focus Mode end to end on a synthetic menu with the real OCR models (speaks only the new item, stays silent on no change / no cursor / other app focused, re-announces after the menu reopens, "unclear" with two cursors, cache hit on revisit, latency events written, no menu text in the event log).
+- **Not tested by me:** real arrow-key presses in DELTARUNE. That's Mark's test.
+
 ### Focus step 2: Selection logic (`focus.py`, pure) + calibration self-test
 - `locate_cursor` (template match, ambiguity check, NaN-safe on flat black), `locate_highlight` (HSV mask with hue wrap → merged rows → largest), `decide()` (speak / same / unclear / silent: no cursor on screen = silent, not "unclear", so walking around the overworld stays quiet), LRU `OcrCache` keyed by crop hash, `normalize_frame` (rescale to the calibrated size; different aspect ratio = recalibrate).
 - Ran on the real DELTARUNE frame: heart template matched at score 1.000 with the correct row, both on the real "Yes selected" frame and on a locally edited copy with the heart moved to "No" (not a real game state).

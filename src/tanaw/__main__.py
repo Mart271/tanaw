@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
 
 from pydantic import ValidationError
 
@@ -16,8 +17,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m tanaw",
         description="Tanaw: reads game text aloud, fully offline. Read Mode: Ctrl+Alt+R.",
     )
-    parser.add_argument("--window", required=True,
-                        help="Case-insensitive part of the game window's title, e.g. DELTARUNE")
+    parser.add_argument("--window",
+                        help="Case-insensitive part of the game window's title, e.g. DELTARUNE "
+                             "(optional with --profile: the profile's window is used)")
+    parser.add_argument("--profile", type=Path,
+                        help="Focus Mode profile from python -m tanaw.calibrate")
     parser.add_argument("--debug-captures", action="store_true",
                         help="Save captured frames to ./debug/ (deleted on clean exit)")
     parser.add_argument("--verbose-text", action="store_true",
@@ -44,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = AppSettings(
             window=args.window,
+            profile=args.profile,
             debug_captures=args.debug_captures,
             verbose_text=args.verbose_text,
             min_confidence=args.min_confidence,

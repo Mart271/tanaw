@@ -68,3 +68,35 @@ def test_settle_times_out_on_constant_animation() -> None:
 def test_settle_validates_arguments() -> None:
     with pytest.raises(ValueError):
         settle(lambda: solid(0), threshold=2.0)
+
+
+def test_settle_after_change_waits_for_the_game_to_redraw() -> None:
+    from tanaw.frames import settle_after_change
+
+    old = solid(0)
+    # Two stale frames (game hasn't redrawn yet), one mid-animation, then stable.
+    frames = iter([solid(0), solid(0), solid(120), solid(200), solid(200)])
+    clock = FakeClock()
+    result = settle_after_change(lambda: next(frames), old, clock=clock, sleep=clock.sleep)
+    assert result.changed and result.settled
+    assert int(result.frame[0, 0, 0]) == 200
+    assert result.frames_grabbed == 5
+
+
+def test_settle_after_change_reports_no_change() -> None:
+    from tanaw.frames import settle_after_change
+
+    clock = FakeClock()
+    result = settle_after_change(lambda: solid(0), solid(0), change_timeout_s=0.1,
+                                 clock=clock, sleep=clock.sleep)
+    assert not result.changed
+    assert result.elapsed_s >= 0.1
+
+
+def test_settle_after_change_without_reference_just_settles() -> None:
+    from tanaw.frames import settle_after_change
+
+    frames = iter([solid(10), solid(10)])
+    clock = FakeClock()
+    result = settle_after_change(lambda: next(frames), None, clock=clock, sleep=clock.sleep)
+    assert result.changed and result.settled and result.frames_grabbed == 2

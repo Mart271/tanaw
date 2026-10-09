@@ -54,6 +54,7 @@ class Located:
     status: LocateStatus
     row: Rect | None  # selected row in menu-region coordinates
     score: float  # match score (template) or pixel count (highlight)
+    cursor: Rect | None = None  # where the cursor sprite is (cursor_template only)
 
 
 def normalize_frame(frame: Frame, width: int, height: int, *, tolerance: float = 0.02) -> Frame:
@@ -123,7 +124,7 @@ def locate_cursor(
     row_rect = _clamp(Rect(x + row.dx, y + row.dy, row.width, row.height), rw, rh)
     if row_rect is None:
         return Located(LocateStatus.NOT_FOUND, None, float(best))
-    return Located(LocateStatus.FOUND, row_rect, float(best))
+    return Located(LocateStatus.FOUND, row_rect, float(best), Rect(x, y, tw, th))
 
 
 # --- highlight_color ------------------------------------------------------------------------
@@ -212,6 +213,27 @@ def preprocess_for_ocr(
     _, binary = cv2.threshold(gray, threshold_value, 255, cv2.THRESH_BINARY_INV)
     out: Frame = np.ascontiguousarray(cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR), dtype=np.uint8)
     return out
+
+
+def selected_row_image(region: Frame, located: Located) -> Frame:
+    """Crop the selected row; paint over the cursor sprite with the row's background.
+
+    OCR can read a cursor sprite as a character (a heart became "♥" at 0.11
+    confidence in our synthetic test), and that one unreadable box would make the
+    whole row "unclear". We know exactly where the cursor is, so remove it.
+    """
+    if located.row is None:
+        raise ValueError("no row to crop")
+    row = crop(region, located.row).copy()
+    if located.cursor is not None:
+        cursor_in_row = Rect(located.cursor.left - located.row.left,
+                             located.cursor.top - located.row.top,
+                             located.cursor.width, located.cursor.height)
+        h, w = row.shape[:2]
+        overlap = Rect(0, 0, w, h).intersect(cursor_in_row)
+        if overlap is not None:
+            row[overlap.top:overlap.bottom, overlap.left:overlap.right] = border_colour(row)
+    return row
 
 
 def border_colour(image: Frame) -> tuple[int, int, int]:

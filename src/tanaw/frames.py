@@ -67,6 +67,56 @@ def frame_difference(a: Frame, b: Frame, *, pixel_tolerance: int = 12) -> float:
 
 
 @dataclass(frozen=True, slots=True)
+class ChangeResult:
+    frame: Frame
+    changed: bool  # False: nothing changed vs. the reference before the change timeout
+    settled: bool
+    frames_grabbed: int
+    elapsed_s: float
+
+
+def settle_after_change(
+    grab: Callable[[], Frame],
+    reference: Frame | None,
+    *,
+    change_threshold: float = 0.001,
+    change_timeout_s: float = 0.25,
+    settle_threshold: float = 0.002,
+    settle_timeout_s: float = 0.3,
+    interval_s: float = 0.035,
+    clock: Callable[[], float] = time.perf_counter,
+    sleep: Callable[[float], None] = time.sleep,
+) -> ChangeResult:
+    """After a keypress: wait for the image to differ from ``reference``, then to settle.
+
+    The diff against the last stable frame is only a prefilter ("did anything
+    happen?"). Games redraw a frame or two after the key, so a grab taken too
+    early still shows the old state; waiting for a change avoids reading it.
+    With no reference (first read), it only waits for the image to settle.
+    """
+    start = clock()
+    frame = grab()
+    count = 1
+    if reference is not None:
+        while frame_difference(frame, reference) <= change_threshold:
+            if clock() - start >= change_timeout_s:
+                return ChangeResult(frame, False, True, count, clock() - start)
+            sleep(interval_s)
+            frame = grab()
+            count += 1
+    settle_start = clock()
+    while True:
+        if clock() - settle_start >= settle_timeout_s:
+            return ChangeResult(frame, True, False, count, clock() - start)
+        sleep(interval_s)
+        current = grab()
+        count += 1
+        if frame_difference(frame, current) < settle_threshold:
+            return ChangeResult(current, True, True, count, clock() - start)
+        frame = current
+
+
+@dataclass(frozen=True, slots=True)
 class SettleResult:
     frame: Frame
     settled: bool  # False if we hit the timeout while the image was still changing
