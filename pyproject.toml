@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tanaw"
+version = "0.1.0"
+description = "Offline AI accessibility companion that reads game menus aloud for blind and low-vision players."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Mark" }]
+# Pinned to the exact versions the project was built and tested with (Python 3.12, Windows 11).
+dependencies = [
+    "rapidocr==3.10.0",
+    "onnxruntime==1.31.0",
+    "numpy==2.5.3",
+    "opencv-python-headless==5.0.0.93",
+    "mss==10.2.0",
+    "pywin32==312",
+    "pynput==1.8.2",
+    "pydantic==2.14.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "mypy==2.4.0",
+    "ruff==0.16.10",
+    "types-pywin32==312.0.0.20261006",
+    "types-pynput==1.8.1.20260712",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+# rapidocr ships a partial stub; we wrap it in a typed adapter (tanaw.ocr).
+module = ["rapidocr", "rapidocr.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "N", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

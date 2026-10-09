@@ -31,8 +31,8 @@ Event: **AppBuildersPH Hackathon 2026 — theme "Local AI"**. Building started *
 
 ## 3. Current status
 
-- [ ] **No code yet** (as of 3:35 PM, Oct 9).
-- [ ] **Demo game not yet chosen** — biggest open blocker. See §9.
+- [ ] **No code yet** (as of 3:35 PM, Oct 9). Build of P0 steps 1–6 started 4:00 PM — see `docs/progress.md`.
+- [x] **Demo game chosen (Oct 9):** primary **DELTARUNE Chapter 1&2** (free), backup a free RPG Maker MV/MZ game. See §10.
 - [x] Concept, scope, and defense finalized (`docs/proposal.md`).
 
 ## 4. Scope
@@ -72,11 +72,11 @@ Event: **AppBuildersPH Hackathon 2026 — theme "Local AI"**. Building started *
 
 | Concern | Choice | Notes |
 |---|---|---|
-| Language | Python 3.11+ | Fully typed, `mypy --strict` clean |
+| Language | Python 3.11+ (developed and tested on **3.12**) | Fully typed, `mypy --strict` clean |
 | Window lookup | `pywin32` (`win32gui`) | Call `SetProcessDpiAwareness(2)` (per-monitor) at startup, or window rects will be wrong on scaled displays |
 | Capture | `mss` on the window's client rect | Window must be visible/foreground and borderless/windowed. Windows Graphics Capture is a possible later upgrade |
-| Image ops | `numpy`, `opencv-python` | Diffing, HSV masks, template matching, upscaling, `cv2.selectROI` for calibration |
-| OCR | `rapidocr-onnxruntime` (PaddleOCR models on ONNX Runtime) | **Verify current package name/API at install time and pin the version.** Upscale crops 2–3× before OCR for small/pixel fonts |
+| Image ops | `numpy`, `opencv-python-headless` | Diffing, HSV masks, template matching, upscaling. **Headless build** because `rapidocr` depends on it, and installing `opencv-python` alongside it overwrites the same `cv2` files. Headless has no `cv2.selectROI` window, so the calibration tool draws its ROI picker with `tkinter` (stdlib) instead |
+| OCR | `rapidocr==3.10.0` on `onnxruntime` (PaddleOCR **PP-OCRv6 small** det/rec models + PP-OCR mobile v2.0 direction classifier) | Verified Oct 9: the old `rapidocr-onnxruntime` package is superseded by `rapidocr` 3.x. Models ship **inside the wheel**; we pass their paths explicitly so the library never tries its download path. API: `RapidOCR(params={...})(img_bgr)` → `RapidOCROutput(boxes: ndarray[N,4,2], txts, scores)` or all `None` when no text. First call loads models (~4 s) → warm up at startup. Upscale crops 2–3× for small/pixel fonts |
 | TTS (P0) | Windows SAPI via `win32com.client` `SAPI.SpVoice` | Zero download, offline. `Speak(text, 1 \| 2)` = async + purge-before-speak (instant interrupt). Supports `Pause()`/`Resume()`/`Rate`. Call `pythoncom.CoInitialize()` in the speech thread |
 | TTS (P1) | Piper | Better voice; needs audio playback + stop handling |
 | Hotkeys / key events | `pynput` | Global listener for hotkeys + navigation keys. Never block the listener thread |
@@ -200,8 +200,17 @@ OCR the whole client area (or a profile-defined region), group boxes into lines 
 | `Ctrl+Alt+P` | Pause/resume speech |
 | `Ctrl+Alt+A` (hold) | Ask Mode (P1): hold to speak a question, release to get the answer |
 
-## 10. Demo game selection (open decision)
+## 10. Demo game selection
 
+### Decision (Oct 9)
+| | Game | Strategy | Notes |
+|---|---|---|---|
+| **Primary** | **DELTARUNE Chapter 1&2** (free, Toby Fox) | `cursor_template` — menus mark the selection with a **red heart (SOUL) sprite** | Runs windowed; **F4** toggles fullscreen (keep it windowed for capture). Controls: arrows navigate, **Z/Enter** confirm, **X** cancel, **C** menu. Pixel font → always upscale before OCR and verify OCR quality early |
+| **Backup** | A free RPG Maker MV/MZ game | `highlight_color` — selection is a highlighted bar | Switch if DELTARUNE's pixel font or heart tracking can't be made reliable in time |
+
+Copyright: game screenshots and sprites (including the heart template) are **never committed**. They live in `fixtures/` and `profiles/local/`, both gitignored. Only labels, scripts, and code go in the public repo.
+
+### Original selection criteria
 Pick one game that has:
 - Turn-based play controlled with **arrow keys**
 - **Windowed or borderless** mode

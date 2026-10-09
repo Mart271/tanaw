@@ -1,0 +1,24 @@
+# Local environment
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Runtime output — may contain game frames or metadata from a play session
+debug/
+logs/
+
+# Copyrighted game material: screenshots, crops, cursor sprites. Never commit.
+fixtures/
+profiles/local/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
