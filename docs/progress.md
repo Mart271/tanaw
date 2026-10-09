@@ -6,6 +6,11 @@ Hardware/software for all runs below: Windows 11 Home (10.0.26300), Python 3.12 
 
 ## Oct 9, 2026
 
+### Step 2 — Network guard (`src/tanaw/netguard.py`)
+- Wraps `socket.socket.connect`, `connect_ex`, `sendto` (refuse non-loopback peers) and `socket.getaddrinfo` (refuse hostname lookups other than `localhost`, so no DNS leak).
+- Ran `pytest`: 29 passed. Covers pure address rules, TCP/UDP/DNS/`urllib` blocked under the guard, and a real loopback TCP round-trip still working.
+- Not yet run: Wi-Fi-off end-to-end test (needs the full app).
+
 ### Step 1 — Project skeleton
 - Added `pyproject.toml` with pinned dependencies, `.gitignore`, `README.md`, `DISCLOSURES.md`, this file.
 - Verified at install time: the OCR package is now `rapidocr` 3.10.0 (the old `rapidocr-onnxruntime` is superseded). Its wheel bundles PP-OCRv6 small det/rec models.
