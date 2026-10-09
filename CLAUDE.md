@@ -31,11 +31,13 @@ Event: **AppBuildersPH Hackathon 2026 — theme "Local AI"**. Building started *
 
 ## 3. Current status
 
-- [x] P0 steps 1–6 built Oct 9, 4:00–4:30 PM: skeleton, network guard, capture, OCR, speech, Read Mode. Unit-tested and smoke-tested on a non-game window; **not yet run on DELTARUNE**. See `docs/progress.md`.
-- [ ] Next P0: calibration tool (tkinter ROI picker — headless OpenCV has no `selectROI`) + Focus Mode with `cursor_template` for DELTARUNE's heart.
-- Hotkeys: pynput's `HotKey` helper is unreliable for Ctrl+Alt+letter on Windows; `tanaw.hotkeys` matches virtual-key codes instead.
-- [x] **Demo game chosen (Oct 9):** primary **DELTARUNE Chapter 1&2** (free), backup a free RPG Maker MV/MZ game. See §10.
 - [x] Concept, scope, and defense finalized (`docs/proposal.md`).
+- [x] **Demo game chosen (Oct 9):** primary **DELTARUNE Chapter 1&2** (free), backup a free RPG Maker MV/MZ game. See §10.
+- [x] P0 built Oct 9, 4:00–4:40 PM: skeleton, network guard, capture, OCR, speech, Read Mode. Details and every test run in `docs/progress.md`.
+- [x] Read pipeline run on DELTARUNE (real capture + OCR + layout, speech printed): reads the "start from Chapter 1?" screen in ~1.0–1.2 s, **but pixel-font "No" reads as "Ho" at 0.97+ confidence**. Fix goes in the DELTARUNE profile once we have more frames (see §10).
+- [x] Mark tested Read Mode on DELTARUNE with the real hotkeys: works.
+- [ ] Not yet done: Wi-Fi-off run.
+- [ ] Next P0: calibration tool (tkinter ROI picker) + Focus Mode with `cursor_template` for DELTARUNE's heart, then the companion panel (§9b).
 
 ## 4. Scope
 
@@ -63,6 +65,7 @@ Event: **AppBuildersPH Hackathon 2026 — theme "Local AI"**. Building started *
 | P0 | Calibration tool + profiles | Sighted helper can create a profile for a game in < 2 min |
 | P0 | **Focus Mode** | Speaks the newly selected menu item after a nav keypress, in a calibrated menu |
 | P0 | Network guard | Core refuses any non-loopback connection (see §7) |
+| P1 | Companion panel (§9b) | Live captions, mode, offline badge, latency visible to judges in the live demo and video. Build right after Focus Mode works on the demo game |
 | P1 | Benchmarks | Scripts measure keypress→speech latency, selection accuracy, OCR errors; results recorded honestly |
 | P1 | Better voice (Piper) | Neural voice replaces SAPI (SAPI isn't neural — Piper strengthens the Local AI score). Do this first in P1 |
 | P1 | Ask Mode | Player asks **by voice** (push-to-talk, local speech recognition) → answers a bounded question locally (OCR-derived logic first, VLM second) → spoken answer |
@@ -74,15 +77,16 @@ Event: **AppBuildersPH Hackathon 2026 — theme "Local AI"**. Building started *
 
 | Concern | Choice | Notes |
 |---|---|---|
-| Language | Python 3.11+ (developed and tested on **3.12**) | Fully typed, `mypy --strict` clean |
-| Window lookup | `pywin32` (`win32gui`) | Call `SetProcessDpiAwareness(2)` (per-monitor) at startup, or window rects will be wrong on scaled displays |
-| Capture | `mss` on the window's client rect | Window must be visible/foreground and borderless/windowed. Windows Graphics Capture is a possible later upgrade |
+| Language | Python 3.11+ (developed and tested on **3.12**; the venv is `py -3.12 -m venv .venv`) | Fully typed, `mypy --strict` clean |
+| Window lookup | `pywin32` (`win32gui`) | Per-monitor DPI awareness at startup (`SetProcessDpiAwarenessContext(-4)`, falling back to `SetProcessDpiAwareness(2)`), or window rects will be wrong on scaled displays |
+| Capture | **`PrintWindow`** (`PW_CLIENTONLY \| PW_RENDERFULLCONTENT`, via ctypes in `printwindow.py`), with `mss` screen pixels as fallback | `PrintWindow` makes the game render its own client area, so it works **while covered** and can never include another app's pixels (verified on DELTARUNE: exact frame in 21–35 ms). Screen pixels (`mss`) are used **only while the game is the foreground window**; otherwise capture raises and Tanaw says "Bring it to the front." (`capture.decide_source`). Lesson learned: plain `mss` captured the Claude window that was covering the game. Window must be windowed/borderless |
 | Image ops | `numpy`, `opencv-python-headless` | Diffing, HSV masks, template matching, upscaling. **Headless build** because `rapidocr` depends on it, and installing `opencv-python` alongside it overwrites the same `cv2` files. Headless has no `cv2.selectROI` window, so the calibration tool draws its ROI picker with `tkinter` (stdlib) instead |
-| OCR | `rapidocr==3.10.0` on `onnxruntime` (PaddleOCR **PP-OCRv6 small** det/rec models + PP-OCR mobile v2.0 direction classifier) | Verified Oct 9: the old `rapidocr-onnxruntime` package is superseded by `rapidocr` 3.x. Models ship **inside the wheel**; we pass their paths explicitly so the library never tries its download path. API: `RapidOCR(params={...})(img_bgr)` → `RapidOCROutput(boxes: ndarray[N,4,2], txts, scores)` or all `None` when no text. First call loads models (~4 s) → warm up at startup. Upscale crops 2–3× for small/pixel fonts |
+| OCR | `rapidocr==3.10.0` on `onnxruntime==1.31.0` (PaddleOCR **PP-OCRv6 small** det + rec models) | Verified Oct 9: the old `rapidocr-onnxruntime` package is superseded by `rapidocr` 3.x. Models ship **inside the wheel**; we pass their paths explicitly so the library never reaches its download path. API: `RapidOCR(params={...})(img_bgr)` → `RapidOCROutput(boxes: ndarray[N,4,2], txts, scores)`, or all `None` when no text. Direction classifier disabled (game text is never upside down). **Detector resize set to "max side ≤ 960" and 4 ONNX threads** — the default ("min side ≥ 736") made a 160x60 crop take ~2 s. Recognition-only on a single row crop (no detection) was ~22 ms in a quick check: use it for Focus Mode. Warm up at startup |
 | TTS (P0) | Windows SAPI via `win32com.client` `SAPI.SpVoice` | Zero download, offline. `Speak(text, 1 \| 2)` = async + purge-before-speak (instant interrupt). Supports `Pause()`/`Resume()`/`Rate`. Call `pythoncom.CoInitialize()` in the speech thread |
 | TTS (P1) | Piper | Better voice; needs audio playback + stop handling |
-| Hotkeys / key events | `pynput` | Global listener for hotkeys + navigation keys. Never block the listener thread |
+| Hotkeys / key events | `pynput` (`keyboard.Listener` only) | Global listener for hotkeys + navigation keys. Never block the listener thread. **Don't use pynput's `HotKey`/`GlobalHotKeys`**: with Ctrl+Alt held Windows can report a letter with no character, so they miss Ctrl+Alt+R. `tanaw.hotkeys` matches Windows virtual-key codes instead |
 | Config/validation | `pydantic` v2 | Profiles and settings validated on load |
+| Companion panel | Tkinter | No extra deps. Tk owns its own thread; other threads send updates via a queue polled with `after()` |
 | Ask Mode (P1) | Ollama on `127.0.0.1:11434` with a small VLM, e.g. `qwen2.5vl:3b` | Verify the exact model tag in the Ollama library. Loopback only |
 | Speech recognition (P1, Ask Mode input) | `faster-whisper` (small or base model, CPU int8) | Push-to-talk. Blind players can't type questions, so Ask Mode needs voice input. Model downloaded once at setup |
 | Quality | `pytest`, `mypy`, `ruff` | Tests run on fixture screenshots, no live game needed |
@@ -146,18 +150,23 @@ tanaw/
   docs/proposal.md          # full pitch + 10-expert defense
   profiles/<game>.json      # per-game calibration
   src/tanaw/
-    __main__.py             # `python -m tanaw --profile profiles/<game>.json`
+    __main__.py             # `python -m tanaw --window "DELTARUNE"` (later also --profile profiles/<game>.json)
+    app.py                  # wiring: hotkeys → worker thread (capture/OCR) → speaker
     settings.py             # pydantic settings + profile schema
     netguard.py             # loopback-only socket guard
-    capture.py              # DPI awareness, window lookup, client-rect capture, settle()
+    frames.py               # Frame/Rect types, frame_difference, settle() (pure)
+    printwindow.py          # PrintWindow capture of the window's own pixels (ctypes/GDI)
+    capture.py              # DPI awareness, window lookup, capture source decision, client-area capture
     ocr.py                  # typed RapidOCR adapter, preprocessing, confidence filter
     layout.py               # reading-order grouping (pure)
     focus.py                # selection tracking strategies (pure + thin I/O)
     speech.py               # SAPI speaker: speak/stop/repeat/pause/resume
-    hotkeys.py              # pynput bindings → event queue
-    calibrate.py            # cv2.selectROI-based profile builder
+    hotkeys.py              # pynput listener + virtual-key hotkey matcher (pure)
+    calibrate.py            # tkinter ROI picker → profile builder
     ask.py                  # P1: OCR-derived answers, then loopback VLM
     events.py               # append-only JSONL event log (metadata only)
+    ui/panel.py             # companion panel (Tkinter) — captions, mode, offline badge, metrics
+  assets/fonts/             # DM Sans + Inter (OFL) with license files, registered privately at runtime
   scripts/
     bench_latency.py        # keypress → speech-start latency
     bench_focus.py          # selection accuracy on labeled transitions
@@ -171,7 +180,7 @@ tanaw/
 **Known trap:** a plain before/after diff marks **both** the old and new highlighted items as changed. We must identify the *new selection*, not just changed pixels.
 
 ### Approach (per-game profile, created once by a sighted helper)
-Calibration (`python -m tanaw.calibrate`) uses `cv2.selectROI` to let the helper drag:
+Calibration (`python -m tanaw.calibrate`) shows a captured frame in a `tkinter` window (headless OpenCV has no `cv2.selectROI`) and lets the helper drag:
 1. The **menu region** (where selectable items live).
 2. A box over the **currently highlighted item** → sample its highlight signature.
 
@@ -202,15 +211,36 @@ OCR the whole client area (or a profile-defined region), group boxes into lines 
 | `Ctrl+Alt+P` | Pause/resume speech |
 | `Ctrl+Alt+A` (hold) | Ask Mode (P1): hold to speak a question, release to get the answer |
 
+## 9b. Companion panel (UI)
+
+**Why:** judges are sighted and watch the live demo and the video — they must *see* what Tanaw says. It also helps low-vision users. Speech + hotkeys remain the primary interface; everything must work with the panel closed.
+
+**Contents (dark, high-contrast theme):**
+- **Live caption** — last spoken text, DM Sans 36/40 (Display XL), wraps. The biggest thing on the panel.
+- **Status row** — mode (Focus / Read / Ask) in DM Sans 18/28; offline badge `NETWORK BLOCKED · LOOPBACK ONLY` as an uppercase label 12/16; last keypress→speech latency (ms) and OCR confidence as metrics in DM Sans 24/32.
+- **History** — last 5 utterances with timestamps, Inter 14/20.
+- **Header** — selected game window + active profile name, Inter 16/24.
+- Section labels: uppercase 12/16, 0.05em letter spacing if Tk supports it (otherwise skip spacing).
+
+**Fonts:** bundle DM Sans and Inter (OFL, with licenses) in `assets/fonts/`; register privately via Windows `AddFontResourceExW` with `FR_PRIVATE`. No network font loading. Fall back to Segoe UI. List in DISCLOSURES.md.
+
+**Capture safety (critical):** the default capture (`PrintWindow`) renders only the game window, so an overlapping panel isn't captured. But the screen-pixel fallback (used when `PrintWindow` gives nothing and the game is in front) copies the game's screen area, so the panel must still **never overlap the game** or Tanaw could OCR its own captions. Default position: beside the game window. Also apply `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`; if unsupported, rely on positioning and log a warning.
+
+**Behavior:** `Ctrl+Alt+H` shows/hides the panel; always-on-top toggle; no mouse required. The panel shows only what was spoken (never extra OCR text) — same privacy rules as §7.
+
+**Demo/video layout:** game window on the left, panel on the right, Wi-Fi icon visible in the taskbar. Optionally a Task Manager strip showing CPU/GPU load during OCR and Ask Mode.
+
 ## 10. Demo game selection
 
 ### Decision (Oct 9)
 | | Game | Strategy | Notes |
 |---|---|---|---|
-| **Primary** | **DELTARUNE Chapter 1&2** (free, Toby Fox) | `cursor_template` — menus mark the selection with a **red heart (SOUL) sprite** | Runs windowed; **F4** toggles fullscreen (keep it windowed for capture). Controls: arrows navigate, **Z/Enter** confirm, **X** cancel, **C** menu. Pixel font → always upscale before OCR and verify OCR quality early |
+| **Primary** | **DELTARUNE Chapter 1&2** (free, Toby Fox) | `cursor_template` — menus mark the selection with a **red heart (SOUL) sprite**; the selected option is also drawn **yellow** (others white), a possible `highlight_color` backup | Window title `DELTARUNE Chapter 1&2`, class `YYGameMakerYY`, client area 1280x960 (2x of native 640x480). **F4** toggles fullscreen (keep it windowed). Controls: arrows navigate, **Z/Enter** confirm, **X** cancel, **C** menu |
 | **Backup** | A free RPG Maker MV/MZ game | `highlight_color` — selection is a highlighted bar | Switch if DELTARUNE's pixel font or heart tracking can't be made reliable in time |
 
-Copyright: game screenshots and sprites (including the heart template) are **never committed**. They live in `fixtures/` and `profiles/local/`, both gitignored. Only labels, scripts, and code go in the public repo.
+**OCR on DELTARUNE (first frame, Oct 9):** the sentence and "Yes" read perfectly; pixel-font **"No" → "Ho" at 0.97–0.997 confidence**, so the confidence filter can't catch it. On that one frame, these read "No" correctly: black-and-white threshold + slight blur; downscale to native 640x480 + threshold (also fastest, 374 ms full frame); cropping just the row (36 ms). Collect more frames (battle menu, dialogue, status) before picking a per-profile preprocessing step. Don't hard-code a fix from one frame.
+
+Copyright: game screenshots and sprites (including the heart template) are **never committed**. They live in `debug/`, `fixtures/` and `profiles/local/`, all gitignored. Only labels, scripts, and code go in the public repo.
 
 ### Original selection criteria
 Pick one game that has:
