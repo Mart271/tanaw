@@ -113,9 +113,9 @@ Results with hardware specs are in [`docs/results.md`](docs/results.md). To repr
 
 ```powershell
 .venv\Scripts\python.exe scripts\check_offline.py --prove-offline   # with Wi-Fi off
-.venv\Scripts\python.exe scriptsench_latency.py                   # from logs\session-*.jsonl
-.venv\Scripts\python.exe scriptsench_focus.py --labels fixtures\labels.json
-.venv\Scripts\python.exe scriptsench_ocr.py --labels fixtures\labels.json
+.venv\Scripts\python.exe scripts\bench_latency.py                   # from logs\session-*.jsonl
+.venv\Scripts\python.exe scripts\bench_focus.py --labels fixtures\labels.json
+.venv\Scripts\python.exe scripts\bench_ocr.py --labels fixtures\labels.json
 ```
 
 The labels format is described at the top of `src/tanaw/bench.py`. Game screenshots stay in the gitignored `fixtures/` folder.
