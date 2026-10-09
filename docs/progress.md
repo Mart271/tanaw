@@ -6,6 +6,16 @@ Hardware/software for all runs below: Windows 11 Home (10.0.26300), Python 3.12 
 
 ## Oct 9, 2026
 
+Test laptop: Intel Core i5-12500H (16 threads), 15.6 GB RAM, two 1920x1080 displays.
+
+### Step 4 — OCR adapter (`src/tanaw/ocr.py`)
+- Typed wrapper: `OcrEngine.read(frame, upscale=...)` returns `TextBox(text, confidence, rect)` in original-image coordinates, plus a count of boxes dropped for low confidence. Explicit model paths, direction classifier off, warm-up call.
+- **Speed fix found by measuring:** rapidocr's default detector resize ("min side ≥ 736") made a 160x60 crop take ~1.7–2.2 s. Switched to "max side ≤ 960" and 4 ONNX threads. Same crop then took 95 ms through the CLI. These are quick checks on synthetic OpenCV-drawn text, **not** benchmarks; real numbers come from the P1 benchmark scripts on game frames.
+- Quick-check observations (synthetic 1280x960 frame, same laptop): full-frame OCR ~0.6–1.0 s, mostly detection; a single menu-row crop ~50 ms, or ~22 ms with recognition only (no detection). That last one matters for Focus Mode.
+- Ran `pytest`: 54 passed, including the real models reading synthetic text **with the network guard on**.
+- Ran `python -m tanaw.ocr <tiny pixel-text PNG> --upscale 2 --nearest`: read "FIGHT ACT" (0.97) and "ITEM SPARE" (1.00). Adjacent words on one row can merge into one box.
+- **Manual test needed:** OCR a real DELTARUNE capture at `--upscale 1`, `2`, `3`, with and without `--nearest`, and note which reads the pixel font best.
+
 ### Step 3 — Window capture (`src/tanaw/capture.py`, `src/tanaw/frames.py`)
 - Per-monitor DPI awareness (`SetProcessDpiAwarenessContext(-4)`, with fallbacks), window lookup by title substring (skips terminals and Explorer folders, prefers an exact title, refuses ambiguous matches), client-area capture with `mss`, `settle()` that waits for the image to stop changing.
 - Ran `pytest`: 44 passed (adds window-choice rules, title validation, `Rect`, `frame_difference`, `settle` with a fake clock).

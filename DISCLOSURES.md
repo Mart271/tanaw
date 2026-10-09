@@ -8,7 +8,8 @@ Everything Tanaw depends on, as required by the hackathon rules. Kept current as
 |---|---|---|---|
 | PP-OCRv6 small text **detection** (`PP-OCRv6_det_small.onnx`) | Finds where text is in a frame | PaddleOCR, converted to ONNX and bundled in the `rapidocr` 3.10.0 wheel | Apache-2.0 |
 | PP-OCRv6 small text **recognition** (`PP-OCRv6_rec_small.onnx`) | Reads the text in each detected box | PaddleOCR via `rapidocr` 3.10.0 wheel | Apache-2.0 |
-| PP-OCR mobile v2.0 text direction classifier (`ch_ppocr_mobile_v2.0_cls_mobile.onnx`) | Detects upside-down text lines | PaddleOCR via `rapidocr` 3.10.0 wheel | Apache-2.0 |
+
+The wheel also contains a text-direction classifier (`ch_ppocr_mobile_v2.0_cls_mobile.onnx`); Tanaw turns it off because game text is never upside down.
 
 Text-to-speech currently uses the built-in **Windows SAPI** voice (part of Windows, not a neural model).
 
