@@ -15,6 +15,7 @@ import argparse
 import logging
 import queue
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
@@ -49,7 +50,17 @@ class VoiceBackend(Protocol):
 
     def wait_until_done(self, timeout_ms: int) -> bool: ...
 
+    def poll_start_times(self) -> list[float]:
+        """``time.perf_counter()`` values at which audio started since the last poll."""
+        ...
+
     def close(self) -> None: ...
+
+
+#: Called on the speech thread with the perf_counter time speech audio started.
+SpeechStartCallback = Callable[[float], None]
+# Give up waiting for a start event after this long (e.g. utterance was purged).
+_START_WAIT_LIMIT_S = 5.0
 
 
 class _SpVoice(Protocol):
@@ -88,10 +99,23 @@ class SapiVoice:
 
         pythoncom.CoInitialize()
         self._com_ready = True
+        starts: list[float] = []
+
+        class _Events:
+            # SAPI's StartStream event: audio for an utterance began. Delivered as a
+            # window message, so poll_start_times() pumps messages on this thread.
+            def OnStartStream(  # noqa: N802 (COM event name)
+                self, stream_number: object, stream_position: object
+            ) -> None:
+                starts.append(time.perf_counter())
+
+        self._starts = starts
         try:
-            self._voice = cast(_SpVoice, win32com.client.Dispatch("SAPI.SpVoice"))
+            dispatch = win32com.client.Dispatch("SAPI.SpVoice")
+            self._voice = cast(_SpVoice, dispatch)
             self._voice.Rate = validate_rate(rate)
             self._voice.Volume = validate_volume(volume)
+            self._event_sink = win32com.client.WithEvents(dispatch, _Events)  # type: ignore[no-untyped-call]
         except Exception:
             pythoncom.CoUninitialize()
             self._com_ready = False
@@ -112,10 +136,19 @@ class SapiVoice:
     def wait_until_done(self, timeout_ms: int) -> bool:
         return bool(self._voice.WaitUntilDone(timeout_ms))
 
+    def poll_start_times(self) -> list[float]:
+        import pythoncom
+
+        pythoncom.PumpWaitingMessages()
+        times = list(self._starts)
+        self._starts.clear()
+        return times
+
     def close(self) -> None:
         if self._com_ready:
             import pythoncom
 
+            del self._event_sink
             del self._voice
             pythoncom.CoUninitialize()
             self._com_ready = False
@@ -128,6 +161,7 @@ class SapiVoice:
 class _Speak:
     text: str
     remember: bool
+    on_start: SpeechStartCallback | None = None
 
 
 class _Stop:
@@ -173,6 +207,8 @@ class Speaker:
         # Owned by the speech thread only:
         self._last_text: str | None = None
         self._paused = False
+        # (callback, perf_counter when Speak was called) for the utterance in flight.
+        self._awaiting_start: tuple[SpeechStartCallback, float] | None = None
 
     # -- lifecycle -----------------------------------------------------------------------
 
@@ -191,9 +227,15 @@ class Speaker:
 
     # -- public commands (non-blocking) -------------------------------------------------
 
-    def speak(self, text: str, *, remember: bool = True) -> None:
-        """Interrupt current speech and say ``text``. ``remember`` makes it the repeat target."""
-        self._commands.put(_Speak(text, remember))
+    def speak(
+        self, text: str, *, remember: bool = True, on_start: SpeechStartCallback | None = None
+    ) -> None:
+        """Interrupt current speech and say ``text``.
+
+        ``remember`` makes it the repeat target. ``on_start`` is called (on the speech
+        thread, must be quick) with the perf_counter time the audio started.
+        """
+        self._commands.put(_Speak(text, remember, on_start))
 
     def stop(self) -> None:
         self._commands.put(_Stop())
@@ -226,7 +268,16 @@ class Speaker:
         logger.info("speech thread started")
         try:
             while True:
-                command = self._commands.get()
+                # Poll quickly only while waiting for an utterance's start event.
+                timeout = 0.005 if self._awaiting_start is not None else 0.1
+                command: _Command | None
+                try:
+                    command = self._commands.get(timeout=timeout)
+                except queue.Empty:
+                    command = None
+                self._check_started(backend)
+                if command is None:
+                    continue
                 if isinstance(command, _Shutdown):
                     backend.stop()
                     break
@@ -238,10 +289,31 @@ class Speaker:
             backend.close()
             logger.info("speech thread stopped")
 
+    def _check_started(self, backend: VoiceBackend) -> None:
+        try:
+            starts = backend.poll_start_times()
+        except Exception:
+            logger.exception("polling speech start events failed")
+            return
+        if self._awaiting_start is None:
+            return
+        callback, called_at = self._awaiting_start
+        started = next((t for t in starts if t >= called_at), None)
+        if started is not None:
+            self._awaiting_start = None
+            try:
+                callback(started)
+            except Exception:
+                logger.exception("speech start callback failed")
+        elif time.perf_counter() - called_at > _START_WAIT_LIMIT_S:
+            self._awaiting_start = None
+
     def _handle(self, backend: VoiceBackend, command: _Command) -> None:
         if isinstance(command, _Speak):
-            self._say(backend, command.text, remember=command.remember)
+            self._say(backend, command.text, remember=command.remember,
+                      on_start=command.on_start)
         elif isinstance(command, _Stop):
+            self._awaiting_start = None
             backend.stop()
             self._ensure_resumed(backend)
             logger.debug("speech stopped")
@@ -263,7 +335,14 @@ class Speaker:
                 backend.wait_until_done(command.wait_for_audio_ms)
             command.done.set()
 
-    def _say(self, backend: VoiceBackend, text: str, *, remember: bool) -> None:
+    def _say(
+        self,
+        backend: VoiceBackend,
+        text: str,
+        *,
+        remember: bool,
+        on_start: SpeechStartCallback | None = None,
+    ) -> None:
         cleaned = " ".join(text.split())
         if not cleaned:
             return
@@ -274,6 +353,9 @@ class Speaker:
         # A new utterance while paused would sit silently in the queue; the player
         # pressed a key to hear something, so resume.
         self._ensure_resumed(backend)
+        backend.poll_start_times()  # drop stale start events from earlier utterances
+        # Purge-before-speak: an earlier utterance still waiting will never start.
+        self._awaiting_start = None if on_start is None else (on_start, time.perf_counter())
         backend.speak(cleaned)
         if self._log_text:
             logger.info("speak %r", cleaned)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Iterator
 
 import pytest
@@ -19,6 +20,7 @@ from tanaw.speech import (
 class FakeVoice:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.pending_starts: list[float] = []
         self.thread: threading.Thread | None = None
 
     def _record(self, name: str, arg: str = "") -> None:
@@ -27,6 +29,7 @@ class FakeVoice:
 
     def speak(self, text: str) -> None:
         self._record("speak", text)
+        self.pending_starts.append(time.perf_counter())
 
     def stop(self) -> None:
         self._record("stop")
@@ -39,6 +42,12 @@ class FakeVoice:
 
     def wait_until_done(self, timeout_ms: int) -> bool:
         return True
+
+    def poll_start_times(self) -> list[float]:
+        # Pretend audio starts right after each speak call.
+        times = self.pending_starts
+        self.pending_starts = []
+        return times
 
     def close(self) -> None:
         self._record("close")
@@ -142,3 +151,32 @@ def test_rate_and_volume_validation() -> None:
         validate_rate(11)
     with pytest.raises(ValueError):
         validate_volume(-1)
+
+
+def test_on_start_called_with_start_time(speaker: Speaker, voice: FakeVoice) -> None:
+    started: list[float] = []
+    before = time.perf_counter()
+    speaker.speak("Fight", on_start=started.append)
+    speaker.flush()
+    deadline = time.perf_counter() + 2
+    while not started and time.perf_counter() < deadline:
+        time.sleep(0.01)
+    assert len(started) == 1
+    assert started[0] >= before
+
+
+def test_on_start_dropped_when_stopped_first() -> None:
+    started: list[float] = []
+
+    class SilentVoice(FakeVoice):
+        def poll_start_times(self) -> list[float]:
+            return []  # audio never starts (e.g. stopped immediately)
+
+    silent = SilentVoice()
+    s = Speaker(lambda: silent)
+    s.start()
+    s.speak("Act", on_start=started.append)
+    s.stop()
+    s.flush()
+    s.close()
+    assert started == []
