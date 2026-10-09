@@ -61,16 +61,27 @@ python -m tanaw --window "DELTARUNE"
 | `--debug-captures` | Save each captured frame to `./debug/` (deleted again on clean exit). Off by default: no frames are written to disk |
 | `--verbose-text` | Include recognised text in logs. Off by default: logs contain only metadata (timings, sizes, confidences) |
 | `--min-confidence 0.6` | OCR boxes below this confidence are dropped |
-| `--upscale 2` | Upscale frames before OCR (helps pixel fonts) |
+| `--upscale 2` | Upscale frames before OCR, 1 to 4 (may help pixel fonts; default 1) |
+| `--nearest` | Use nearest-neighbour upscaling instead of cubic |
+| `--rate 2` | Speech rate, -10 (slow) to 10 (fast) |
+
+Read Mode only reads when the game window is in front. If another window is focused, Tanaw says "Switch to the game window first" instead of reading whatever is covering the game.
 
 ## Debug tools
 
 ```powershell
-# Capture the game window once and save it to ./debug/
+# List visible window titles (to find the right --window text)
+python -m tanaw.capture --list
+
+# Capture the game window once and save it to ./debug/capture-<time>.png
 python -m tanaw.capture --window "DELTARUNE" --save
 
 # OCR an image file and print each box, its text and confidence
-python -m tanaw.ocr debug\capture.png --upscale 2
+python -m tanaw.ocr debug\capture-20261009-170000.png --upscale 2
+python -m tanaw.ocr debug\capture-20261009-170000.png --upscale 2 --nearest
+
+# Say a line with the speech engine
+python -m tanaw.speech "Hello from Tanaw"
 ```
 
 ## Development checks

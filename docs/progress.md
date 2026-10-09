@@ -8,6 +8,18 @@ Hardware/software for all runs below: Windows 11 Home (10.0.26300), Python 3.12 
 
 Test laptop: Intel Core i5-12500H (16 threads), 15.6 GB RAM, two 1920x1080 displays.
 
+### Step 6 — Read Mode (`layout.py`, `hotkeys.py`, `settings.py`, `events.py`, `app.py`, `__main__.py`)
+- `layout.py` (pure): groups OCR boxes into lines by vertical overlap, orders top→bottom / left→right, reads wide gaps as a pause ("FIGHT, ACT"), drops dialogue bullets ("* ..."), ends lines with a full stop for natural pauses.
+- `hotkeys.py`: own matcher on Windows virtual-key codes. **Found while probing pynput 1.8.2:** its `HotKey` helper compares letters by character, but with Ctrl+Alt held Windows can report the letter with no character, so `<ctrl>+<alt>+r` never matched in a simulated press. Hotkeys must include Ctrl or Alt, so they can't steal a game key; duplicates are rejected.
+- Worker thread owns capture + OCR; speech controls (stop/repeat/pause) bypass it and go straight to the speaker, so Stop is instant even mid-OCR. Repeated Read presses while busy are merged into one read. Read refuses if the game isn't the foreground window.
+- `logs/session-*.jsonl`: metadata only; the log API rejects free-text values. `--debug-captures` frames are deleted on clean exit.
+- Ran `pytest`: **112 passed**. `mypy --strict`: clean (22 files). `ruff`: clean.
+- Ran `python -m tanaw --window "DELTARUNE"` with the game closed: printed and spoke the "No window" error, exit code 1; event log had only `start` / `error kind=WindowNotFoundError` / `stop`.
+- Ran `python -m tanaw --window x --upscale 9`: rejected by validation, exit code 2.
+- Ran the full app against Task Manager for 15 s: reached `ready` (OCR load 1.47 s, warm-up 0.52 s, hotkey listener started), then I force-killed it (couldn't send Ctrl+C to a background process, so clean-exit cleanup was covered by unit tests, not this run).
+- Ran real capture → real OCR → layout through the worker on the Task Manager window (foreground check bypassed, speech replaced by a counter): 3 runs produced ~2,700 characters each in **3.4–4.9 s**. That is a very text-dense window (100+ text boxes); a game screen has far less text, but **full-screen Read Mode latency on DELTARUNE is unmeasured**.
+- **Not tested by me, must be tested manually:** pressing the real hotkeys (I did not inject keystrokes into your desktop), hearing the speech, and anything on DELTARUNE itself.
+
 ### Step 5 — Speech (`src/tanaw/speech.py`)
 - `Speaker` runs SAPI on its own thread (`tanaw-speech`); COM is initialised and released inside that thread. `speak` / `stop` / `repeat_last` / `toggle_pause` only enqueue, so callers never block. Flags: async + purge-before-speak + **not-XML** (so OCR text can't inject SAPI markup). New speech while paused resumes; stop while paused un-pauses.
 - Ran `pytest`: 65 passed (11 speech tests with a fake voice: ordering, thread, repeat, pause, stop, truncation, init failure).

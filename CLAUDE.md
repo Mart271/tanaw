@@ -31,7 +31,9 @@ Event: **AppBuildersPH Hackathon 2026 — theme "Local AI"**. Building started *
 
 ## 3. Current status
 
-- [ ] **No code yet** (as of 3:35 PM, Oct 9). Build of P0 steps 1–6 started 4:00 PM — see `docs/progress.md`.
+- [x] P0 steps 1–6 built Oct 9, 4:00–4:30 PM: skeleton, network guard, capture, OCR, speech, Read Mode. Unit-tested and smoke-tested on a non-game window; **not yet run on DELTARUNE**. See `docs/progress.md`.
+- [ ] Next P0: calibration tool (tkinter ROI picker — headless OpenCV has no `selectROI`) + Focus Mode with `cursor_template` for DELTARUNE's heart.
+- Hotkeys: pynput's `HotKey` helper is unreliable for Ctrl+Alt+letter on Windows; `tanaw.hotkeys` matches virtual-key codes instead.
 - [x] **Demo game chosen (Oct 9):** primary **DELTARUNE Chapter 1&2** (free), backup a free RPG Maker MV/MZ game. See §10.
 - [x] Concept, scope, and defense finalized (`docs/proposal.md`).
 
